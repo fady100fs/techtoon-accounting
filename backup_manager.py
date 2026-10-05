@@ -48,6 +48,10 @@ class BackupManager:
         self.db_path = db_path
         self.backup_folder = Path(backup_folder) if backup_folder else Path(__file__).parent / "backups"
         self.backup_folder.mkdir(parents=True, exist_ok=True)
+
+        # ✅ توافق مع الكود القديم — نستخدم نفس المجلد كـ "خارجي آمن"
+        self.external_backup_folder = self.backup_folder
+
         self.running = False
         self.thread = None
         self.last_backup_time = None
@@ -74,7 +78,6 @@ class BackupManager:
                         df.to_csv(csv_path, index=False, encoding="utf-8-sig")
                         total_rows += len(df)
                     except Exception:
-                        # بعض الجداول ممكن مش موجودة — نتجاهلها
                         continue
 
             self.last_backup_time = datetime.now()
@@ -115,7 +118,6 @@ class BackupManager:
             )
             for folder in folders:
                 stat = folder.stat()
-                # نحسب الحجم الكلي والعدد
                 total_size = sum(
                     f.stat().st_size for f in folder.glob("*.csv")
                 )
@@ -133,13 +135,10 @@ class BackupManager:
         return backups
 
     # ======================================================
-    # استعادة نسخة (تحذير: تتطلب Neon Console)
+    # استعادة نسخة
     # ======================================================
     def restore_backup(self, backup_path):
-        """
-        الاستعادة الكاملة تتم من خلال Neon Console.
-        هنا نتحقق فقط من وجود النسخة.
-        """
+        """الاستعادة الكاملة تتم من خلال Neon Console."""
         try:
             backup_folder = Path(backup_path)
             if not backup_folder.exists():
@@ -159,20 +158,26 @@ class BackupManager:
             return False, f"خطأ: {str(e)}"
 
     # ======================================================
-    # حالة النظام
+    # حالة النظام — متوافقة مع كل الإصدارات
     # ======================================================
     def get_backup_status(self):
-        """يعرض حالة النظام الحالية."""
+        """يعرض حالة النظام الحالية — متوافق مع الصفحات القديمة والجديدة."""
         try:
             backups = self.get_backup_list()
             total_size = sum(b['size'] for b in backups)
+            count = len(backups)
             return {
+                # مفاتيح الإعدادات
                 'enabled': BACKUP_SETTINGS['enabled'],
                 'interval_hours': BACKUP_SETTINGS['interval_hours'],
                 'max_backups': BACKUP_SETTINGS['max_backups'],
                 'last_backup': self.last_backup_time,
-                'backups_count': len(backups),
+                # مفاتيح جديدة
+                'backups_count': count,
                 'total_size': total_size,
+                # مفاتيح قديمة (للتوافق مع pages/11)
+                'local_backups_count': count,
+                'external_backups_count': count,  # نستخدم نفس المجلد
             }
         except Exception as e:
             return {
@@ -182,15 +187,16 @@ class BackupManager:
                 'last_backup': None,
                 'backups_count': 0,
                 'total_size': 0,
+                'local_backups_count': 0,
+                'external_backups_count': 0,
                 'error': str(e),
             }
 
     # ======================================================
-    # النسخ التلقائي (يُستدعى من Task Scheduler)
+    # النسخ التلقائي (متوافق مع الواجهة القديمة)
     # ======================================================
     def start_auto_backup(self):
-        """متوافق مع الواجهة القديمة — لا يفعل شيء في Streamlit."""
-        # نتركها فارغة لأن Streamlit لا يدعم الخيوط الخلفية بشكل موثوق
+        """متوافق مع الواجهة القديمة."""
         pass
 
     def stop_auto_backup(self):
