@@ -1,10 +1,11 @@
 # backup_manager.py
 """
 مدير النسخ الاحتياطي — نسخة متوافقة مع Neon PostgreSQL
-يصدّر كل جداول قاعدة البيانات إلى ملفات CSV في مجلدات مُؤرَّخة.
++ إمكانية تغيير مكان النسخ الاحتياطي من داخل البرنامج.
 """
 
 import os
+import json
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,17 +17,19 @@ from database import engine
 
 
 # ==========================================================
-# الإعدادات
+# الثوابت
 # ==========================================================
 BACKUP_SETTINGS = {
     'enabled': True,
-    'interval_hours': 24,       # نسخة يوميًا
-    'max_backups': 14,          # الاحتفاظ بآخر 14 نسخة
+    'interval_hours': 24,
+    'max_backups': 14,
     'backup_folder': None,
 }
 
+CONFIG_FILE = Path(__file__).parent / "backup_config.json"
+DEFAULT_BACKUP_FOLDER = Path(__file__).parent / "backups"
 
-# كل جداول قاعدة البيانات — بالترتيب الصحيح
+
 ALL_TABLES = [
     "currencies", "accounts", "users", "accounting_periods",
     "parties", "cash_boxes", "categories", "items",
@@ -40,21 +43,104 @@ ALL_TABLES = [
 ]
 
 
+# ==========================================================
+# إعدادات مكان الحفظ (Config File)
+# ==========================================================
+def _load_backup_folder():
+    """يقرأ المكان المحفوظ من ملف الإعدادات، أو الافتراضي."""
+    try:
+        if CONFIG_FILE.exists():
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            folder = data.get("backup_folder")
+            if folder:
+                p = Path(folder)
+                p.mkdir(parents=True, exist_ok=True)
+                return p
+    except Exception:
+        pass
+    DEFAULT_BACKUP_FOLDER.mkdir(parents=True, exist_ok=True)
+    return DEFAULT_BACKUP_FOLDER
+
+
+def _save_backup_folder(folder_path):
+    """يحفظ المكان في ملف الإعدادات."""
+    try:
+        CONFIG_FILE.write_text(
+            json.dumps(
+                {"backup_folder": str(folder_path)},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return True
+    except Exception:
+        return False
+
+
 class BackupManager:
     """مدير النسخ الاحتياطي المتوافق مع Neon."""
 
     def __init__(self, db_path=None, backup_folder=None):
-        # ملاحظة: db_path محتفظ به للتوافق لكن غير مستخدم
         self.db_path = db_path
-        self.backup_folder = Path(backup_folder) if backup_folder else Path(__file__).parent / "backups"
-        self.backup_folder.mkdir(parents=True, exist_ok=True)
 
-        # ✅ توافق مع الكود القديم — نستخدم نفس المجلد كـ "خارجي آمن"
+        # نستخدم المكان المخصص (لو موجود) أو الافتراضي
+        if backup_folder:
+            self.backup_folder = Path(backup_folder)
+        else:
+            self.backup_folder = _load_backup_folder()
+
+        self.backup_folder.mkdir(parents=True, exist_ok=True)
         self.external_backup_folder = self.backup_folder
 
         self.running = False
         self.thread = None
         self.last_backup_time = None
+
+    # ======================================================
+    # إدارة مكان النسخ الاحتياطي
+    # ======================================================
+    def get_backup_folder(self):
+        """يرجع المكان الحالي للنسخ الاحتياطي."""
+        return str(self.backup_folder)
+
+    def set_backup_folder(self, new_path):
+        """يغيّر مكان النسخ الاحتياطي ويحفظه."""
+        try:
+            new_path_str = str(new_path or "").strip()
+            if not new_path_str:
+                return False, "الرجاء إدخال مسار صحيح."
+
+            new_folder = Path(new_path_str).expanduser().resolve()
+            new_folder.mkdir(parents=True, exist_ok=True)
+
+            # اختبار الكتابة
+            test_file = new_folder / ".write_test"
+            try:
+                test_file.write_text("ok", encoding="utf-8")
+                test_file.unlink()
+            except Exception as e:
+                return False, f"لا يمكن الكتابة في هذا المسار: {e}"
+
+            # الحفظ
+            self.backup_folder = new_folder
+            self.external_backup_folder = new_folder
+            _save_backup_folder(new_folder)
+
+            return True, f"تم تغيير المكان إلى: {new_folder}"
+        except Exception as e:
+            return False, f"خطأ: {e}"
+
+    def reset_backup_folder(self):
+        """يرجع المكان للافتراضي."""
+        try:
+            DEFAULT_BACKUP_FOLDER.mkdir(parents=True, exist_ok=True)
+            self.backup_folder = DEFAULT_BACKUP_FOLDER
+            self.external_backup_folder = DEFAULT_BACKUP_FOLDER
+            _save_backup_folder(DEFAULT_BACKUP_FOLDER)
+            return True, f"تم استعادة المكان الافتراضي: {DEFAULT_BACKUP_FOLDER}"
+        except Exception as e:
+            return False, f"خطأ: {e}"
 
     # ======================================================
     # إنشاء نسخة احتياطية
@@ -68,7 +154,6 @@ class BackupManager:
             backup_folder.mkdir(parents=True, exist_ok=True)
 
             total_rows = 0
-            failed = []
 
             with engine.connect() as conn:
                 for table in ALL_TABLES:
@@ -87,9 +172,6 @@ class BackupManager:
         except Exception as e:
             return False, f"خطأ: {str(e)}"
 
-    # ======================================================
-    # تنظيف النسخ القديمة
-    # ======================================================
     def _cleanup_old_backups(self):
         """يحذف النسخ الأقدم من الحد الأقصى."""
         try:
@@ -118,9 +200,7 @@ class BackupManager:
             )
             for folder in folders:
                 stat = folder.stat()
-                total_size = sum(
-                    f.stat().st_size for f in folder.glob("*.csv")
-                )
+                total_size = sum(f.stat().st_size for f in folder.glob("*.csv"))
                 files_count = len(list(folder.glob("*.csv")))
                 backups.append({
                     'name': folder.name,
@@ -138,7 +218,6 @@ class BackupManager:
     # استعادة نسخة
     # ======================================================
     def restore_backup(self, backup_path):
-        """الاستعادة الكاملة تتم من خلال Neon Console."""
         try:
             backup_folder = Path(backup_path)
             if not backup_folder.exists():
@@ -158,26 +237,23 @@ class BackupManager:
             return False, f"خطأ: {str(e)}"
 
     # ======================================================
-    # حالة النظام — متوافقة مع كل الإصدارات
+    # حالة النظام
     # ======================================================
     def get_backup_status(self):
-        """يعرض حالة النظام الحالية — متوافق مع الصفحات القديمة والجديدة."""
+        """يعرض حالة النظام الحالية."""
         try:
             backups = self.get_backup_list()
             total_size = sum(b['size'] for b in backups)
             count = len(backups)
             return {
-                # مفاتيح الإعدادات
                 'enabled': BACKUP_SETTINGS['enabled'],
                 'interval_hours': BACKUP_SETTINGS['interval_hours'],
                 'max_backups': BACKUP_SETTINGS['max_backups'],
                 'last_backup': self.last_backup_time,
-                # مفاتيح جديدة
                 'backups_count': count,
                 'total_size': total_size,
-                # مفاتيح قديمة (للتوافق مع pages/11)
                 'local_backups_count': count,
-                'external_backups_count': count,  # نستخدم نفس المجلد
+                'external_backups_count': count,
             }
         except Exception as e:
             return {
@@ -193,18 +269,48 @@ class BackupManager:
             }
 
     # ======================================================
-    # النسخ التلقائي (متوافق مع الواجهة القديمة)
+    # واجهة تغيير مكان النسخ (تُستدعى من صفحة النسخ)
     # ======================================================
-    def start_auto_backup(self):
-        """متوافق مع الواجهة القديمة."""
-        pass
+    def render_folder_settings(self):
+        """واجهة تغيير مكان النسخ الاحتياطي."""
+        import streamlit as st
 
-    def stop_auto_backup(self):
-        """متوافق مع الواجهة القديمة."""
-        self.running = False
+        st.markdown("#### 📁 مكان النسخ الاحتياطي")
+        current = self.get_backup_folder()
+        st.caption(f"**المكان الحالي:** `{current}`")
+
+        new_path = st.text_input(
+            "المكان الجديد (اكتب المسار الكامل):",
+            value=current,
+            key="backup_folder_input",
+            help=r"مثال: D:\Backups  أو  C:\Users\fady\Documents\Techtoon_Backups",
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ تعيين المكان", type="primary", use_container_width=True):
+                ok, msg = self.set_backup_folder(new_path)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        with col2:
+            if st.button("🔄 استعادة الافتراضي", use_container_width=True):
+                ok, msg = self.reset_backup_folder()
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+        st.caption(
+            "💡 **ملاحظة:** المكان الجديد لازم يكون موجود أو البرنامج هينشئه. "
+            "لو مش عارف المسار، جرّب: `D:\\Backups` أو `C:\\Users\\<اسمك>\\Documents\\Techtoon_Backups`"
+        )
 
 
 # ==========================================================
-# نسخة عامة للاستخدام
+# نسخة عامة
 # ==========================================================
 backup_manager = BackupManager()

@@ -1,4 +1,3 @@
-
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -74,7 +73,7 @@ with tab1:
                 st.error(f"❌ {message}")
     
     with col2:
-        if st.button(" تحديث القائمة", use_container_width=True):
+        if st.button("🔄 تحديث القائمة", use_container_width=True):
             st.rerun()
     
     st.markdown("---")
@@ -109,6 +108,10 @@ with tab1:
         st.info(f"**المجلد المحلي:**\n{backup_manager.backup_folder}")
     with col2:
         st.success(f"**المجلد الخارجي الآمن:**\n{backup_manager.external_backup_folder}")
+    
+    # ✅ واجهة تغيير مكان النسخ الاحتياطي
+    st.markdown("---")
+    backup_manager.render_folder_settings()
 
 # ==========================================
 # التبويب 2: الاستعادة
@@ -162,7 +165,7 @@ with tab2:
             confirm_2 = st.checkbox("أؤكد أنني اخترت النسخة الصحيحة")
             confirm_3 = st.checkbox("أوافق على إنشاء نسخة احتياطية تلقائية قبل الاستعادة")
             
-            if st.button(" استعادة النسخة", type="primary", disabled=not (confirm_1 and confirm_2 and confirm_3)):
+            if st.button("🔄 استعادة النسخة", type="primary", disabled=not (confirm_1 and confirm_2 and confirm_3)):
                 success, message = backup_manager.restore_backup(backup_path)
                 
                 if success:
@@ -259,7 +262,7 @@ with tab4:
     
     st.markdown("---")
     
-    st.markdown("###  مواقع التخزين")
+    st.markdown("### 📁 مواقع التخزين")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -268,6 +271,10 @@ with tab4:
     with col2:
         st.markdown("**المجلد الخارجي الآمن:**")
         st.code(str(backup_manager.external_backup_folder))
+    
+    # ✅ واجهة تغيير مكان النسخ الاحتياطي (في الإعدادات كمان)
+    st.markdown("---")
+    backup_manager.render_folder_settings()
     
     st.markdown("---")
     
