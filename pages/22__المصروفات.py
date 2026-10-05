@@ -1,4 +1,5 @@
 # pages/22_💸_المصروفات.py
+# صفحة الإيرادات والمصروفات — تختار الحساب من شجرة الحسابات مباشرة
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -12,120 +13,267 @@ from datetime import datetime
 
 from database import SessionLocal
 import models
-from models import ExpenseCategory, Expense, CashBox, Account
+from models import Account, AccountType, CashBox
 from services import (
-    create_expense_category, create_expense, get_expenses_summary,
-    delete_expense,
-    get_expense_categories, get_expense_category_by_id,
-    update_expense_category, delete_expense_category,
-    deactivate_expense_category, activate_expense_category,
-    get_expense_category_usage,
+    create_expense, delete_expense, get_expenses_summary,
+    get_expense_categories, create_expense_category,
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
 from sidebar import can_modify
 
-# التحقق من تسجيل الدخول
+# ==========================================
+# التحقق من الدخول
+# ==========================================
 current_user = require_login()
 current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
 
-st.set_page_config(page_title="المصروفات", page_icon="💸", layout="wide")
-st.title("💸 إدارة المصروفات التشغيلية")
+st.set_page_config(page_title="الإيرادات والمصروفات", page_icon="💹", layout="wide")
+st.title("💹 إدارة الإيرادات والمصروفات")
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 db = SessionLocal()
 
+
+# ==========================================
+# دوال مساعدة
+# ==========================================
+def _create_transaction_entry(account_id, amount, description, transaction_type,
+                              cash_box_id, reference_number=None, notes=None,
+                              created_by=None, transaction_date=None):
+    """ينشئ قيد محاسبي لإيراد أو مصروف مباشرة من الحساب."""
+    from datetime import datetime as _dt
+    db = SessionLocal()
+    try:
+        cash_box = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
+        if not cash_box:
+            raise ValueError("الخزينة غير موجودة")
+
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if not account:
+            raise ValueError("الحساب غير موجود")
+
+        entry_date = transaction_date or _dt.now()
+        ref_type = "revenue" if transaction_type == "revenue" else "expense"
+
+        entry = models.JournalEntry(
+            date=entry_date,
+            description=f"{'إيراد' if ref_type == 'revenue' else 'مصروف'}: {description}",
+            reference_type=ref_type,
+            created_by=created_by,
+        )
+        db.add(entry)
+        db.flush()
+
+        if ref_type == "expense":
+            # مصروف: مدين الحساب، دائن الخزينة
+            db.add(models.JournalLine(
+                entry_id=entry.id, account_id=account_id,
+                debit=float(amount), credit=0.0
+            ))
+            db.add(models.JournalLine(
+                entry_id=entry.id, account_id=cash_box.account_id,
+                debit=0.0, credit=float(amount)
+            ))
+        else:
+            # إيراد: مدين الخزينة، دائن الحساب
+            db.add(models.JournalLine(
+                entry_id=entry.id, account_id=cash_box.account_id,
+                debit=float(amount), credit=0.0
+            ))
+            db.add(models.JournalLine(
+                entry_id=entry.id, account_id=account_id,
+                debit=0.0, credit=float(amount)
+            ))
+
+        db.commit()
+        return entry
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _get_transactions(transaction_type=None, start=None, end=None):
+    """يرجع الحركات (إيرادات/مصروفات) من JournalEntry."""
+    q = db.query(models.JournalEntry).filter(
+        models.JournalEntry.reference_type.in_(["revenue", "expense"])
+    )
+    if transaction_type:
+        q = q.filter(models.JournalEntry.reference_type == transaction_type)
+    if start:
+        q = q.filter(models.JournalEntry.date >= start)
+    if end:
+        q = q.filter(models.JournalEntry.date <= end)
+    return q.order_by(models.JournalEntry.date.desc()).all()
+
+
+def _transaction_details(entry):
+    """يستخرج حساب الحركة + المبلغ."""
+    lines = db.query(models.JournalLine).filter(
+        models.JournalLine.entry_id == entry.id
+    ).all()
+    # القيد: سطرين — واحد debit والتاني credit
+    main_account = None
+    amount = 0.0
+    for ln in lines:
+        acc = db.query(Account).filter(Account.id == ln.account_id).first()
+        if not acc:
+            continue
+        # للسطر اللي مش الخزينة
+        is_cashbox = db.query(CashBox).filter(CashBox.account_id == acc.id).first() is not None
+        if not is_cashbox:
+            main_account = acc
+            amount = float(ln.debit or 0) or float(ln.credit or 0)
+    return main_account, amount
+
+
+# ==========================================
+# التبويبات
+# ==========================================
 tab1, tab2, tab3, tab4 = st.tabs([
-    "➕ تسجيل مصروف جديد",
-    "📋 سجل المصروفات",
-    "🗂️ إدارة تصنيفات المصروفات",
-    "📊 تقرير المصروفات"
+    "➕ تسجيل حركة جديدة",
+    "📋 سجل الحركات",
+    "🗂️ إدارة التصنيفات",
+    "📊 تقرير الإيرادات والمصروفات",
 ])
 
+
 # ==========================================
-# التبويب 1: تسجيل مصروف جديد
+# التبويب 1: تسجيل حركة (إيراد أو مصروف)
 # ==========================================
 with tab1:
-    st.subheader("➕ تسجيل مصروف جديد")
+    st.subheader("➕ تسجيل حركة جديدة")
 
-    # جلب التصنيفات النشطة
-    categories = get_expense_categories(include_inactive=False)
+    # ✅ اختيار النوع
+    transaction_type = st.radio(
+        "نوع الحركة:",
+        ["💰 إيراد", "💸 مصروف"],
+        horizontal=True,
+        key="trans_type",
+    )
+    is_revenue = "إيراد" in transaction_type
 
-    if not categories:
-        st.warning(
-            "⚠️ لا توجد تصنيفات مصروفات! "
-            "يرجى إضافتها أولاً من تبويب **'🗂️ إدارة تصنيفات المصروفات'**."
+    # التاريخ والوقت
+    st.markdown("### 📅 تاريخ ووقت الحركة")
+    col_d, col_t = st.columns(2)
+    with col_d:
+        t_date = st.date_input("التاريخ:", value=datetime.now().date(), key="t_date")
+    with col_t:
+        t_time = st.time_input("الوقت:", value=datetime.now().time(), key="t_time")
+
+    # ✅ اختيار الحساب من شجرة الحسابات
+    target_type = AccountType.REVENUE if is_revenue else AccountType.EXPENSE
+    accounts = db.query(Account).filter(Account.type == target_type).order_by(Account.code).all()
+
+    if not accounts:
+        st.error(
+            f"⚠️ لا توجد حسابات من نوع '**{'إيرادات' if is_revenue else 'مصروفات'}**' "
+            "في شجرة الحسابات! أضفها أولاً من صفحة 'شجرة الحسابات'."
         )
         st.stop()
 
-    # التاريخ والوقت
-    st.markdown("### 📅 تاريخ ووقت المصروف")
-    col_date, col_time = st.columns(2)
-    with col_date:
-        expense_date = st.date_input("التاريخ:", value=datetime.now().date(),
-                                     key="expense_date")
-    with col_time:
-        expense_time = st.time_input("الوقت:", value=datetime.now().time(),
-                                     key="expense_time")
-
-    # التصنيف
-    category_dict = {cat.id: cat.name for cat in categories}
-    selected_category_id = st.selectbox(
-        "تصنيف المصروف:",
-        options=list(category_dict.keys()),
-        format_func=lambda x: category_dict[x]
+    acc_opts = {a.id: f"{a.code} — {a.name}" for a in accounts}
+    selected_account_id = st.selectbox(
+        "الحساب (من شجرة الحسابات):",
+        options=list(acc_opts.keys()),
+        format_func=lambda x: acc_opts[x],
+        key="t_account",
     )
 
-    # المبلغ والوصف
-    amount = st.number_input("مبلغ المصروف:", min_value=0.01, step=100.0,
-                             format="%.2f")
-    description = st.text_area("وصف المصروف:",
-                               placeholder="مثال: فاتورة كهرباء شهر يناير...")
+    amount = st.number_input(
+        "المبلغ (ج.م):", min_value=0.01, step=100.0, value=100.0,
+        format="%.2f", key="t_amount",
+    )
+    description = st.text_area(
+        "الوصف:",
+        placeholder="مثال: فاتورة كهرباء يناير" if not is_revenue else "مثال: دفعة من عميل",
+        key="t_desc",
+    )
 
     # طريقة الدفع
     payment_method = st.selectbox(
         "طريقة الدفع:",
-        ["cash (نقدي)", "bank_transfer (تحويل بنكي)", "check (شيك)"]
+        ["cash (نقدي)", "bank_transfer (تحويل بنكي)", "check (شيك)"],
+        key="t_method",
     )
     actual_method = payment_method.split(" ")[0]
 
     # الخزينة
     cash_boxes = db.query(CashBox).filter(CashBox.is_active == True).all()
     if not cash_boxes:
-        st.error("❌ لا توجد خزائن متاحة! أضف خزينة أولاً.")
+        st.error("❌ لا توجد خزائن مفعّلة! أضف خزينة أولاً.")
         st.stop()
 
-    cash_box_dict = {box.id: f"{box.name} ({box.code})" for box in cash_boxes}
-    selected_cash_box_id = st.selectbox(
-        "الخزينة/الحساب:",
-        options=list(cash_box_dict.keys()),
-        format_func=lambda x: cash_box_dict[x]
+    box_opts = {b.id: f"{b.name} ({b.code})" for b in cash_boxes}
+    selected_box_id = st.selectbox(
+        "الخزينة:", options=list(box_opts.keys()),
+        format_func=lambda x: box_opts[x], key="t_box",
     )
 
-    reference_number = st.text_input("رقم المرجع (اختياري):",
-                                     placeholder="رقم الفاتورة أو الشيك...")
-    notes = st.text_area("ملاحظات (اختياري):")
+    ref_no = st.text_input("رقم المرجع (اختياري):", key="t_ref")
+    notes = st.text_area("ملاحظات (اختياري):", key="t_notes", height=60)
 
-    if st.button("💾 حفظ المصروف", type="primary"):
-        if not description:
-            st.error("يرجى إدخال وصف المصروف")
+    if st.button("💾 حفظ الحركة", type="primary", use_container_width=True, key="save_trans"):
+        if not description.strip():
+            st.error("❌ يرجى إدخال الوصف.")
         elif amount <= 0:
-            st.error("يرجى إدخال مبلغ صحيح")
+            st.error("❌ المبلغ يجب أن يكون أكبر من صفر.")
         else:
             try:
-                expense_datetime = datetime.combine(expense_date, expense_time)
-                create_expense(
-                    category_id=selected_category_id,
-                    amount=amount,
-                    description=description,
-                    payment_method=actual_method,
-                    cash_box_id=selected_cash_box_id,
-                    reference_number=reference_number if reference_number else None,
-                    notes=notes if notes else None,
-                    expense_date=expense_datetime,
-                    created_by=current_user_id
+                trans_dt = datetime.combine(t_date, t_time)
+
+                # ✅ إنشاء القيد المحاسبي
+                _create_transaction_entry(
+                    account_id=int(selected_account_id),
+                    amount=float(amount),
+                    description=description.strip(),
+                    transaction_type="revenue" if is_revenue else "expense",
+                    cash_box_id=int(selected_box_id),
+                    reference_number=ref_no or None,
+                    notes=notes or None,
+                    created_by=current_user_id,
+                    transaction_date=trans_dt,
                 )
-                st.success(f"✅ تم تسجيل المصروف بنجاح! (بواسطة: {current_user_name})")
+
+                # ✅ لو مصروف: نسجل كمان في جدول Expense (للتوافق مع التقارير القديمة)
+                if not is_revenue:
+                    try:
+                        # ننشئ تصنيف لو مش موجود بنفس اسم الحساب
+                        acc_obj = db.query(Account).filter(Account.id == selected_account_id).first()
+                        cat = db.query(models.ExpenseCategory).filter(
+                            models.ExpenseCategory.name == acc_obj.name
+                        ).first()
+                        if not cat:
+                            cat = models.ExpenseCategory(
+                                name=acc_obj.name,
+                                description=f"تصنيف تلقائي للحساب {acc_obj.code}",
+                                account_id=acc_obj.id,
+                                is_active=True,
+                                created_at=datetime.now(),
+                            )
+                            db.add(cat)
+                            db.commit()
+                            db.refresh(cat)
+
+                        create_expense(
+                            category_id=cat.id,
+                            amount=float(amount),
+                            description=description.strip(),
+                            payment_method=actual_method,
+                            cash_box_id=int(selected_box_id),
+                            reference_number=ref_no or None,
+                            notes=notes or None,
+                            expense_date=trans_dt,
+                            created_by=current_user_id,
+                        )
+                    except Exception as ex:
+                        # لو فشل تسجيل المصروف، مش مشكلة — القيد اتعمل بالفعل
+                        pass
+
+                label = "الإيراد" if is_revenue else "المصروف"
+                st.success(f"✅ تم تسجيل {label} بمبلغ {amount:,.2f} ج.م بنجاح!")
                 st.balloons()
                 st.rerun()
             except Exception as e:
@@ -133,365 +281,235 @@ with tab1:
 
 
 # ==========================================
-# التبويب 2: سجل المصروفات
+# التبويب 2: سجل الحركات
 # ==========================================
 with tab2:
-    st.subheader("📋 سجل المصروفات")
+    st.subheader("📋 سجل الحركات")
 
-    all_cats_for_filter = get_expense_categories(include_inactive=True)
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        filter_type = st.selectbox("النوع:", ["الكل", "إيرادات فقط", "مصروفات فقط"], key="f_type")
+    with col_f2:
+        start_filter = st.date_input("من تاريخ:", value=datetime.now().replace(day=1).date(), key="f_start")
+    with col_f3:
+        end_filter = st.date_input("إلى تاريخ:", value=datetime.now().date(), key="f_end")
 
-    # فلاتر
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        filter_category = st.selectbox(
-            "تصفية حسب التصنيف:",
-            options=["الكل"] + [cat.name for cat in all_cats_for_filter]
-        )
-    with col2:
-        start_date = st.date_input("من تاريخ:",
-                                   value=datetime.now().replace(day=1).date())
-    with col3:
-        end_date = st.date_input("إلى تاريخ:", value=datetime.now().date())
+    ttype = None
+    if filter_type == "إيرادات فقط":
+        ttype = "revenue"
+    elif filter_type == "مصروفات فقط":
+        ttype = "expense"
 
-    # جلب المصروفات
-    query = db.query(Expense).join(ExpenseCategory).filter(
-        Expense.date >= datetime.combine(start_date, datetime.min.time()),
-        Expense.date <= datetime.combine(end_date, datetime.max.time())
-    )
+    start_dt = datetime.combine(start_filter, datetime.min.time())
+    end_dt = datetime.combine(end_filter, datetime.max.time())
 
-    if filter_category != "الكل":
-        category = db.query(ExpenseCategory).filter(
-            ExpenseCategory.name == filter_category
-        ).first()
-        if category:
-            query = query.filter(Expense.category_id == category.id)
+    transactions = _get_transactions(transaction_type=ttype, start=start_dt, end=end_dt)
 
-    expenses = query.order_by(Expense.date.desc()).all()
-
-    if expenses:
-        # نجهز خرائط للأسماء
-        cat_map = {c.id: c.name for c in all_cats_for_filter}
-        box_map = {b.id: b.name for b in db.query(CashBox).all()}
-
-        data = []
-        for exp in expenses:
-            data.append({
-                "ID": exp.id,
-                "التاريخ": exp.date.strftime("%Y-%m-%d %H:%M"),
-                "التصنيف": cat_map.get(exp.category_id, "—"),
-                "المبلغ": f"{exp.amount:,.2f} ج.م",
-                "الوصف": exp.description or "—",
-                "طريقة الدفع": exp.payment_method or "—",
-                "الخزينة": box_map.get(exp.cash_box_id, "—"),
-                "رقم المرجع": exp.reference_number or "—"
+    if transactions:
+        rows = []
+        total_revenue = 0.0
+        total_expense = 0.0
+        for t in transactions:
+            acc, amt = _transaction_details(t)
+            is_rev = t.reference_type == "revenue"
+            if is_rev:
+                total_revenue += amt
+            else:
+                total_expense += amt
+            rows.append({
+                "ID": t.id,
+                "التاريخ": t.date.strftime("%Y-%m-%d %H:%M") if t.date else "—",
+                "النوع": "💰 إيراد" if is_rev else "💸 مصروف",
+                "الحساب": f"{acc.code} — {acc.name}" if acc else "—",
+                "المبلغ": amt,
+                "الوصف": t.description or "—",
             })
 
-        df = pd.DataFrame(data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-        # ملخص
-        total = sum(exp.amount for exp in expenses)
-        st.metric("إجمالي المصروفات", f"{total:,.2f} ج.م")
-
-        st.markdown("---")
-        st.subheader("⚙️ حذف مصروف")
-
-        expense_ids = [exp.id for exp in expenses]
-        selected_expense_id = st.selectbox(
-            "اختر مصروفاً للحذف:",
-            options=expense_ids,
-            format_func=lambda x: next((
-                f"{exp.date.strftime('%Y-%m-%d')} - {exp.amount:,.2f} ج.م - {exp.description}"
-                for exp in expenses if exp.id == x
-            ), x)
+        df = pd.DataFrame(rows)
+        st.dataframe(
+            df, use_container_width=True, hide_index=True,
+            column_config={"المبلغ": st.column_config.NumberColumn("المبلغ", format="%.2f")},
         )
 
-        confirm_del = st.checkbox("تأكيد الحذف؟ (سيتم حذف القيد المحاسبي المرتبط)",
-                                  key="confirm_del_exp")
-        if selected_expense_id and st.button(
-            "🗑️ حذف المصروف", type="secondary", disabled=not confirm_del
-        ):
-            try:
-                delete_expense(selected_expense_id)
-                st.success("✅ تم حذف المصروف بنجاح!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ خطأ: {e}")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("إجمالي الإيرادات", f"{total_revenue:,.2f} ج.م")
+        with c2:
+            st.metric("إجمالي المصروفات", f"{total_expense:,.2f} ج.م")
+        with c3:
+            net = total_revenue - total_expense
+            st.metric("الصافي", f"{net:,.2f} ج.م",
+                      delta="ربح" if net >= 0 else "خسارة",
+                      delta_color="normal" if net >= 0 else "inverse")
+
+        # حذف حركة
+        if can_modify():
+            st.markdown("---")
+            st.markdown("### 🗑 حذف حركة")
+            t_ids = [t.id for t in transactions]
+            selected_t = st.selectbox(
+                "اختر حركة للحذف:",
+                options=t_ids,
+                format_func=lambda x: next((
+                    f"#{t.id} — {t.date.strftime('%Y-%m-%d')} — {t.description}"
+                    for t in transactions if t.id == x
+                ), x),
+                key="del_t_select",
+            )
+            confirm = st.checkbox("تأكيد الحذف", key="confirm_del_t")
+            if st.button("🗑 حذف الحركة", type="secondary", disabled=not confirm,
+                         use_container_width=True, key="del_t_btn"):
+                try:
+                    # حذف القيد المحاسبي
+                    entry = db.query(models.JournalEntry).filter(
+                        models.JournalEntry.id == selected_t
+                    ).first()
+                    if entry:
+                        db.query(models.JournalLine).filter(
+                            models.JournalLine.entry_id == entry.id
+                        ).delete(synchronize_session=False)
+                        db.delete(entry)
+                        db.commit()
+                    st.success("✅ تم الحذف.")
+                    st.rerun()
+                except Exception as e:
+                    db.rollback()
+                    st.error(f"❌ خطأ: {e}")
     else:
-        st.info("لا توجد مصروفات في الفترة المحددة.")
+        st.info("لا توجد حركات في الفترة المحددة.")
 
 
 # ==========================================
-# التبويب 3: إدارة تصنيفات المصروفات
+# التبويب 3: إدارة التصنيفات
 # ==========================================
 with tab3:
     st.subheader("🗂️ إدارة تصنيفات المصروفات")
+    st.caption("ملاحظة: هذه التصنيفات مرتبطة بالمصروفات فقط (للتقارير القديمة).")
 
-    # جلب التصنيفات (نشطة + معطلة)
-    all_categories = get_expense_categories(include_inactive=True)
-
-    # الحسابات المتاحة (نوعها مصروفات)
+    # التصنيفات
+    all_cats = get_expense_categories(include_inactive=True)
     expense_accounts = db.query(Account).filter(
-        Account.type == models.AccountType.EXPENSE
-    ).all()
+        Account.type == AccountType.EXPENSE
+    ).order_by(Account.code).all()
     acc_opts = {a.id: f"{a.code} — {a.name}" for a in expense_accounts}
 
-    # ---------------- 3.1) إضافة تصنيف جديد ----------------
-    with st.expander("➕ إضافة تصنيف مصروفات جديد", expanded=not all_categories):
-        st.markdown("""
-        💡 **ملاحظة:** كل تصنيف يجب أن يرتبط بحساب في شجرة الحسابات تحت نوع "مصروفات".
-        لو مش عارف أي حساب تختار، استخدم الحساب الرئيسي للمصروفات.
-        """)
-
+    # إضافة
+    with st.expander("➕ إضافة تصنيف مصروفات جديد", expanded=not all_cats):
         if not acc_opts:
-            st.error(
-                "⚠️ لا توجد حسابات مصروفات في شجرة الحسابات! "
-                "أضف حساب من نوع 'مصروفات' أولاً من صفحة 'شجرة الحسابات'."
-            )
+            st.error("⚠️ لا توجد حسابات مصروفات في شجرة الحسابات!")
         else:
-            with st.form("add_expcat_form", clear_on_submit=True):
-                new_name = st.text_input("اسم التصنيف:",
-                                         placeholder="مثال: إيجار، كهرباء، رواتب...")
+            with st.form("add_cat_form", clear_on_submit=True):
+                new_name = st.text_input("اسم التصنيف:", placeholder="مثال: إيجار، كهرباء...")
                 new_desc = st.text_area("الوصف (اختياري):", height=60)
                 new_acc_id = st.selectbox(
-                    "الحساب المحاسبي المرتبط:",
+                    "الحساب المحاسبي:",
                     options=list(acc_opts.keys()),
                     format_func=lambda x: acc_opts[x],
                 )
-                submitted = st.form_submit_button("💾 إنشاء التصنيف", type="primary")
-
-            if submitted:
+                sub = st.form_submit_button("💾 إنشاء التصنيف", type="primary")
+            if sub:
                 try:
                     if not new_name.strip():
-                        st.error("❌ يرجى إدخال اسم التصنيف.")
+                        st.error("❌ الاسم مطلوب.")
                     else:
                         create_expense_category(
                             name=new_name.strip(),
-                            description=new_desc.strip() if new_desc else None,
+                            description=new_desc.strip() or None,
                             account_id=int(new_acc_id),
                             created_by=current_user_id,
                         )
-                        st.success(f"✅ تم إنشاء التصنيف '{new_name}' بنجاح!")
+                        st.success(f"✅ تم إنشاء '{new_name}'.")
                         st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
 
     st.markdown("---")
 
-    # ---------------- 3.2) قائمة التصنيفات ----------------
-    st.markdown("### 📋 قائمة التصنيفات الحالية")
-
-    if not all_categories:
-        st.info("لا توجد تصنيفات بعد. أضف أول تصنيف من الأعلى.")
-    else:
-        # جدول العرض
+    # قائمة
+    if all_cats:
         rows = []
-        for cat in all_categories:
-            account = db.query(Account).filter(
-                Account.id == cat.account_id
-            ).first()
-            usage = get_expense_category_usage(cat.id)
+        for c in all_cats:
+            acc = db.query(Account).filter(Account.id == c.account_id).first()
+            cnt = db.query(models.Expense).filter(models.Expense.category_id == c.id).count()
             rows.append({
-                "ID": cat.id,
-                "الاسم": cat.name,
-                "الوصف": cat.description or "—",
-                "الحساب": f"{account.code} — {account.name}" if account else "—",
-                "عدد المصروفات": usage["count"],
-                "الإجمالي": f"{usage['total']:,.2f} ج.م",
-                "الحالة": "✅ نشط" if cat.is_active else "⛔ معطل",
+                "ID": c.id, "الاسم": c.name,
+                "الوصف": c.description or "—",
+                "الحساب": f"{acc.code} — {acc.name}" if acc else "—",
+                "عدد المصروفات": cnt,
+                "الحالة": "✅ نشط" if c.is_active else "⛔ معطل",
             })
-        df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-        st.markdown("---")
-
-        # ---------------- 3.3) اختيار تصنيف للتعديل ----------------
-        st.markdown("### ✏️ تعديل تصنيف")
-
-        cat_options = {f"#{c.id} — {c.name}": c.id for c in all_categories}
-        selected_label = st.selectbox(
-            "اختر التصنيف:",
-            options=list(cat_options.keys()),
-            key="edit_expcat_select",
-        )
-        selected_id = cat_options[selected_label]
-        selected_cat = next(c for c in all_categories if c.id == selected_id)
-
-        # إحصائيات التصنيف المختار
-        usage = get_expense_category_usage(selected_id)
-        col_s1, col_s2, col_s3 = st.columns(3)
-        with col_s1:
-            st.metric("عدد المصروفات", usage["count"])
-        with col_s2:
-            st.metric("إجمالي المصروفات", f"{usage['total']:,.2f} ج.م")
-        with col_s3:
-            st.metric("الحالة", "✅ نشط" if selected_cat.is_active else "⛔ معطل")
-
-        # نموذج التعديل
-        with st.form("edit_expcat_form"):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                edit_name = st.text_input("الاسم:", value=selected_cat.name)
-            with col_b:
-                current_acc_idx = 0
-                if acc_opts and selected_cat.account_id in acc_opts:
-                    current_acc_idx = list(acc_opts.keys()).index(selected_cat.account_id)
-                edit_acc = st.selectbox(
-                    "الحساب:",
-                    options=list(acc_opts.keys()) if acc_opts else [selected_cat.account_id],
-                    format_func=lambda x: acc_opts.get(x, "—"),
-                    index=current_acc_idx,
-                )
-            edit_desc = st.text_area(
-                "الوصف:", value=selected_cat.description or "", height=60
-            )
-            edit_active = st.checkbox("نشط", value=bool(selected_cat.is_active))
-
-            save_edit = st.form_submit_button("💾 حفظ التعديلات", type="primary")
-
-        if save_edit:
-            try:
-                if not edit_name.strip():
-                    st.error("❌ الاسم مطلوب.")
-                else:
-                    update_expense_category(
-                        category_id=selected_id,
-                        name=edit_name.strip(),
-                        description=edit_desc.strip() if edit_desc else None,
-                        account_id=int(edit_acc),
-                        is_active=edit_active,
-                    )
-                    st.success(f"✅ تم تحديث '{edit_name}' بنجاح!")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"❌ خطأ: {e}")
-
-        st.markdown("---")
-
-        # ---------------- 3.4) تنشيط/تعطيل ----------------
-        st.markdown("### 🔄 تنشيط / تعطيل")
-
-        col_act, col_deact = st.columns(2)
-        with col_act:
-            if not selected_cat.is_active:
-                if st.button(f"✅ تنشيط '{selected_cat.name}'",
-                             use_container_width=True, key="act_cat_btn"):
-                    try:
-                        activate_expense_category(selected_id)
-                        st.success("✅ تم التنشيط.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ {e}")
-            else:
-                st.caption("التصنيف نشط بالفعل.")
-        with col_deact:
-            if selected_cat.is_active:
-                if st.button(f"⛔ تعطيل '{selected_cat.name}'",
-                             use_container_width=True, key="deact_cat_btn"):
-                    try:
-                        deactivate_expense_category(selected_id)
-                        st.success("✅ تم التعطيل.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ {e}")
-            else:
-                st.caption("التصنيف معطل بالفعل.")
-
-        st.markdown("---")
-
-        # ---------------- 3.5) حذف التصنيف ----------------
-        if can_modify():
-            st.markdown("### 🗑️ حذف التصنيف")
-
-            if usage["count"] > 0:
-                st.warning(
-                    f"⚠️ هذا التصنيف مرتبط بـ **{usage['count']} مصروف** "
-                    f"(إجمالي {usage['total']:,.2f} ج.م). "
-                    "خيارين:"
-                )
-                st.markdown("""
-                - **الحذف القسري** → يحذف التصنيف + كل المصروفات المرتبطة + القيود المحاسبية.
-                - **التعطيل** (الأنصح) → يخفي التصنيف من القوائم لكن المصروفات تفضل محفوظة.
-                """)
-
-                force_del = st.checkbox(
-                    "🗑️ أوافق على الحذف القسري (سيُحذف كل شيء متعلق بهذا التصنيف!)",
-                    key="force_del_cat_checkbox",
-                )
-                if st.button(
-                    "🗑️ حذف قسري",
-                    type="secondary",
-                    disabled=not force_del,
-                    use_container_width=True,
-                    key="force_del_cat_btn",
-                ):
-                    try:
-                        delete_expense_category(selected_id, force=True)
-                        st.success("✅ تم الحذف القسري بنجاح.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ خطأ: {e}")
-            else:
-                st.info("✅ التصنيف غير مرتبط بأي مصروفات — الحذف آمن.")
-                confirm = st.checkbox("تأكيد الحذف", key="confirm_del_cat_checkbox")
-                if st.button(
-                    "🗑️ حذف التصنيف",
-                    type="secondary",
-                    disabled=not confirm,
-                    use_container_width=True,
-                    key="del_cat_btn",
-                ):
-                    try:
-                        delete_expense_category(selected_id, force=False)
-                        st.success("✅ تم الحذف.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ خطأ: {e}")
-        else:
-            st.info("⛔ حذف التصنيفات متاح للمدير فقط.")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("لا توجد تصنيفات.")
 
 
 # ==========================================
-# التبويب 4: تقرير المصروفات
+# التبويب 4: تقرير الإيرادات والمصروفات
 # ==========================================
 with tab4:
-    st.subheader("📊 تقرير المصروفات")
+    st.subheader("📊 تقرير الإيرادات والمصروفات")
 
     col1, col2 = st.columns(2)
     with col1:
-        report_start = st.date_input(
-            "من تاريخ:",
-            value=datetime.now().replace(day=1).date(),
-            key="report_start",
-        )
+        rep_start = st.date_input("من تاريخ:", value=datetime.now().replace(day=1).date(),
+                                  key="rep_start")
     with col2:
-        report_end = st.date_input(
-            "إلى تاريخ:", value=datetime.now().date(), key="report_end"
-        )
+        rep_end = st.date_input("إلى تاريخ:", value=datetime.now().date(), key="rep_end")
 
-    if st.button("📊 عرض التقرير", type="primary"):
-        start_dt = datetime.combine(report_start, datetime.min.time())
-        end_dt = datetime.combine(report_end, datetime.max.time())
+    if st.button("📊 عرض التقرير", type="primary", key="show_report"):
+        s = datetime.combine(rep_start, datetime.min.time())
+        e = datetime.combine(rep_end, datetime.max.time())
 
-        summary = get_expenses_summary(start_dt, end_dt)
+        revs = _get_transactions("revenue", s, e)
+        exps = _get_transactions("expense", s, e)
 
-        st.markdown(f"### 💰 إجمالي المصروفات: {summary['total']:,.2f} ج.م")
+        total_r = sum(_transaction_details(t)[1] for t in revs)
+        total_e = sum(_transaction_details(t)[1] for t in exps)
+        net = total_r - total_e
 
-        if summary["by_category"]:
-            chart_data = pd.DataFrame(summary["by_category"])
-            chart_data.columns = ["التصنيف", "المبلغ"]
-            st.bar_chart(chart_data.set_index("التصنيف"))
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("إجمالي الإيرادات", f"{total_r:,.2f} ج.م")
+        with c2:
+            st.metric("إجمالي المصروفات", f"{total_e:,.2f} ج.م")
+        with c3:
+            st.metric("الصافي", f"{net:,.2f} ج.م",
+                      delta="ربح" if net >= 0 else "خسارة",
+                      delta_color="normal" if net >= 0 else "inverse")
 
-            st.markdown("---")
-            st.subheader("تفاصيل المصروفات حسب التصنيف")
-            for _, row in chart_data.iterrows():
-                pct = (
-                    (row["المبلغ"] / summary["total"] * 100)
-                    if summary["total"] > 0
-                    else 0
-                )
-                st.write(f"**{row['التصنيف']}:** {row['المبلغ']:,.2f} ج.م ({pct:.1f}%)")
-        else:
-            st.info("لا توجد مصروفات في الفترة المحددة.")
+        # تجميع حسب الحساب
+        rev_by_acc = {}
+        for t in revs:
+            acc, amt = _transaction_details(t)
+            key = f"{acc.code} — {acc.name}" if acc else "غير معروف"
+            rev_by_acc[key] = rev_by_acc.get(key, 0) + amt
+
+        exp_by_acc = {}
+        for t in exps:
+            acc, amt = _transaction_details(t)
+            key = f"{acc.code} — {acc.name}" if acc else "غير معروف"
+            exp_by_acc[key] = exp_by_acc.get(key, 0) + amt
+
+        st.markdown("---")
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            st.markdown("### 💰 الإيرادات حسب الحساب")
+            if rev_by_acc:
+                df_r = pd.DataFrame(list(rev_by_acc.items()), columns=["الحساب", "المبلغ"])
+                st.dataframe(df_r, use_container_width=True, hide_index=True)
+                st.bar_chart(df_r.set_index("الحساب"))
+            else:
+                st.info("لا توجد إيرادات.")
+
+        with col_b:
+            st.markdown("### 💸 المصروفات حسب الحساب")
+            if exp_by_acc:
+                df_e = pd.DataFrame(list(exp_by_acc.items()), columns=["الحساب", "المبلغ"])
+                st.dataframe(df_e, use_container_width=True, hide_index=True)
+                st.bar_chart(df_e.set_index("الحساب"))
+            else:
+                st.info("لا توجد مصروفات.")
+
 
 db.close()
