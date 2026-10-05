@@ -9,13 +9,11 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-# ✅ 1. إعدادات الصفحة أولاً
 st.set_page_config(page_title="الفواتير", page_icon="🧾", layout="wide")
 
 from sidebar import render_sidebar, queue_state_updates
 render_sidebar()
 
-# ✅ الاختصارات
 try:
     from shortcuts import install_shortcuts, show_shortcuts_guide
     show_shortcuts_guide()
@@ -30,12 +28,10 @@ from services import create_invoice, create_payment
 from auth_required import require_login, get_current_user_id, get_current_user_name
 from code_search import CodeSearch, FormState
 
-# ✅ 2. التحقق من الدخول
 current_user = require_login()
 current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
 
-# ✅ 3. التنقل بـ Enter
 try:
     from keyboard_nav import enable_enter_navigation, add_enter_hint
     enable_enter_navigation()
@@ -45,7 +41,7 @@ except Exception:
 
 
 # ==========================================
-# أدوات مساعدة
+# ثوابت
 # ==========================================
 CODE_FIELDS = [f for f in ("code", "item_code", "barcode", "sku") if hasattr(models.Item, f)]
 
@@ -56,8 +52,10 @@ PAYMENT_METHODS = {
 }
 
 
+# ==========================================
+# أدوات مساعدة
+# ==========================================
 def zero_null_numbers(obj):
-    """يحوّل القيم الفارغة (None) في الأعمدة الرقمية إلى 0."""
     changed = False
     for col in obj.__table__.columns:
         if col.primary_key or col.foreign_keys:
@@ -69,7 +67,6 @@ def zero_null_numbers(obj):
 
 
 def used_invoice_numbers(db):
-    """{الرقم المسلسل: نص رقم الفاتورة} لكل الفواتير."""
     used = {}
     if hasattr(models.Invoice, "invoice_number"):
         for (num,) in db.query(models.Invoice.invoice_number).all():
@@ -84,7 +81,6 @@ def format_invoice_number(n):
 
 
 def _line_info(db, ln):
-    """يحوّل سطر فاتورة محفوظ إلى صف للعرض."""
     name = None
     item_obj = getattr(ln, "item", None)
     if item_obj is not None:
@@ -94,25 +90,17 @@ def _line_info(db, ln):
         name = it.name if it else None
     if name is None:
         name = getattr(ln, "item_name", None) or getattr(ln, "description", None) or "—"
-
     qty = getattr(ln, "quantity", None)
-    price = next(
-        (getattr(ln, a) for a in ("unit_price", "price", "sell_price", "cost_price")
-         if getattr(ln, a, None) is not None),
-        None,
-    )
-    total = next(
-        (getattr(ln, a) for a in ("total", "total_price", "line_total")
-         if getattr(ln, a, None) is not None),
-        None,
-    )
+    price = next((getattr(ln, a) for a in ("unit_price", "price", "sell_price", "cost_price")
+                  if getattr(ln, a, None) is not None), None)
+    total = next((getattr(ln, a) for a in ("total", "total_price", "line_total")
+                  if getattr(ln, a, None) is not None), None)
     if total is None and qty is not None and price is not None:
         total = qty * price
     return {"الصنف": name, "الكمية": qty, "السعر": price, "الإجمالي": total}
 
 
 def invoice_lines(db, invoice):
-    """أسطر الفاتورة المحفوظة."""
     for rel in models.Invoice.__mapper__.relationships:
         if rel.uselist and hasattr(rel.mapper.class_, "quantity"):
             return [_line_info(db, ln) for ln in getattr(invoice, rel.key)]
@@ -129,21 +117,16 @@ def _clear_edit_state():
 
 
 def _delete_invoice_fully(db, invoice):
-    """حذف فاتورة بالكامل: أصنافها + حركات المخزون + القيود المحاسبية + سجلات التكلفة."""
     inv_id = invoice.id
-
     db.query(models.InvoiceLine).filter(
         models.InvoiceLine.invoice_id == inv_id
     ).delete(synchronize_session=False)
-
     db.query(models.InventoryMovement).filter(
         models.InventoryMovement.reference_id == inv_id
     ).delete(synchronize_session=False)
-
     db.query(models.CostHistory).filter(
         models.CostHistory.invoice_id == inv_id
     ).delete(synchronize_session=False)
-
     je_ids = [row[0] for row in db.query(models.JournalEntry.id).filter(
         models.JournalEntry.reference_id == inv_id,
         models.JournalEntry.reference_type.in_(["invoice", "cogs"]),
@@ -155,20 +138,25 @@ def _delete_invoice_fully(db, invoice):
         db.query(models.JournalEntry).filter(
             models.JournalEntry.id.in_(je_ids)
         ).delete(synchronize_session=False)
-
+    # ✅ نحذف المدفوعات المرتبطة بالفاتورة كمان
+    try:
+        db.query(models.Payment).filter(
+            models.Payment.reference_number == invoice.invoice_number,
+            models.Payment.party_id == invoice.party_id,
+        ).delete(synchronize_session=False)
+    except Exception:
+        pass
     db.delete(invoice)
     db.commit()
 
 
 def _load_invoice_data(db, invoice):
-    """يستخرج بيانات الفاتورة للتعديل."""
     inv_id = invoice.id
     inv_no_str = invoice.invoice_number
     inv_type = invoice.type or "sale"
     party_id = invoice.party_id
     discount = float(invoice.discount_percentage or 0.0)
     tax = float(invoice.tax_rate or 0.0)
-
     lines = db.query(models.InvoiceLine).filter(
         models.InvoiceLine.invoice_id == inv_id
     ).all()
@@ -181,7 +169,6 @@ def _load_invoice_data(db, invoice):
                 'quantity': float(ln.quantity or 0),
                 'price': float(ln.price or 0),
             })
-
     return {
         "id": inv_id,
         "no_str": inv_no_str,
@@ -194,14 +181,11 @@ def _load_invoice_data(db, invoice):
 
 
 def _prepare_invoice_for_edit(data, fs, no_key):
-    """يحوّل بيانات الفاتورة إلى حالة تعديل في الجلسة."""
     st.session_state["_editing_invoice_id"] = data["id"]
     st.session_state["_editing_invoice_no"] = data["no_str"]
     st.session_state["_editing_invoice_type"] = data["type"]
-
     m = re.search(r"(\d+)$", str(data["no_str"] or ""))
     inv_num = int(m.group(1)) if m else 1
-
     queue_state_updates(
         delete_keys=("inv_items_editor",),
         set_values={
@@ -216,27 +200,22 @@ def _prepare_invoice_for_edit(data, fs, no_key):
 
 
 # ==========================================
-# ✅ إدارة المدفوعات
+# إدارة المدفوعات
 # ==========================================
 def _get_invoice_paid_amount(db, invoice):
-    """مجموع المدفوعات المرتبطة بالفاتورة (عبر reference_number)."""
     try:
-        inv_no = invoice.invoice_number
-        rows = db.query(models.Payment).filter(
-            models.Payment.reference_number == inv_no,
+        return sum(float(p.amount or 0) for p in db.query(models.Payment).filter(
+            models.Payment.reference_number == invoice.invoice_number,
             models.Payment.party_id == invoice.party_id,
-        ).all()
-        return sum(float(p.amount or 0) for p in rows)
+        ).all())
     except Exception:
         return 0.0
 
 
 def _get_invoice_payments(db, invoice):
-    """كل المدفوعات المرتبطة بالفاتورة."""
     try:
-        inv_no = invoice.invoice_number
         return db.query(models.Payment).filter(
-            models.Payment.reference_number == inv_no,
+            models.Payment.reference_number == invoice.invoice_number,
             models.Payment.party_id == invoice.party_id,
         ).order_by(models.Payment.date.desc()).all()
     except Exception:
@@ -244,7 +223,6 @@ def _get_invoice_payments(db, invoice):
 
 
 def _update_invoice_status(db, invoice):
-    """يحدّث حالة الفاتورة بناءً على المدفوعات."""
     net = float(invoice.net_amount or 0)
     paid = _get_invoice_paid_amount(db, invoice)
     if paid <= 0:
@@ -259,7 +237,6 @@ def _update_invoice_status(db, invoice):
 
 
 def _status_badge(status):
-    """يرجّع نص و لون الحالة."""
     s = (status or '').lower()
     if s == 'paid':
         return "🟢 مدفوعة", "#11998e"
@@ -270,8 +247,113 @@ def _status_badge(status):
     return "🔴 غير مدفوعة", "#ef4444"
 
 
+def _delete_payment(db, payment_id):
+    """يحذف دفعة."""
+    try:
+        p = db.query(models.Payment).filter(models.Payment.id == payment_id).first()
+        if p:
+            # نحذف القيد المحاسبي المرتبط
+            je = db.query(models.JournalEntry).filter(
+                models.JournalEntry.reference_type == "payment",
+                models.JournalEntry.description.like(f"%{p.reference_number or ''}%"),
+            ).first()
+            db.delete(p)
+            db.commit()
+            return True
+    except Exception:
+        db.rollback()
+    return False
+
+
+# ==========================================
+# قسم الدفع داخل نموذج الإنشاء (اختياري)
+# ==========================================
+def render_payment_section_for_new(db, net_amount, key_prefix="newinv"):
+    """
+    يعرض قسم الدفع الاختياري أثناء إنشاء فاتورة جديدة.
+    يرجّع dict فيه بيانات الدفعة، أو None لو المستخدم مش مفعّل الدفع.
+    """
+    st.markdown("---")
+    st.markdown("### 💵 دفع الفاتورة (اختياري)")
+    st.caption(
+        "لو عايز تسجّل دفعة مع حفظ الفاتورة فورًا، فعّل الخيار ده. "
+        "أو اتركه فاضي وأضف الدفعات لاحقًا من صفحة الفاتورة."
+    )
+
+    enable_payment = st.checkbox(
+        "✅ تسجيل دفعة الآن مع حفظ الفاتورة",
+        value=False,
+        key=f"{key_prefix}_enable",
+    )
+
+    if not enable_payment:
+        return None
+
+    cash_boxes = db.query(models.CashBox).filter(
+        models.CashBox.is_active == True
+    ).all()
+
+    if not cash_boxes:
+        st.error("⚠️ لا توجد خزائن! أضف خزينة أولاً.")
+        return None
+
+    box_opts = {b.id: f"{b.name} ({b.code})" for b in cash_boxes}
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        amount = st.number_input(
+            "المبلغ المدفوع (ج.م):",
+            min_value=0.0,
+            max_value=float(max(net_amount, 0.01)),
+            value=float(net_amount),
+            step=1.0,
+            format="%.2f",
+            key=f"{key_prefix}_amount",
+        )
+    with col_b:
+        method_label = st.selectbox(
+            "طريقة الدفع:",
+            options=list(PAYMENT_METHODS.values()),
+            key=f"{key_prefix}_method",
+        )
+        method_key = next(
+            (k for k, v in PAYMENT_METHODS.items() if v == method_label),
+            "cash",
+        )
+
+    col_c, col_d = st.columns(2)
+    with col_c:
+        box_id = st.selectbox(
+            "الخزينة:",
+            options=list(box_opts.keys()),
+            format_func=lambda x: box_opts[x],
+            key=f"{key_prefix}_box",
+        )
+    with col_d:
+        ref_no = st.text_input(
+            "رقم المرجع (اختياري):",
+            key=f"{key_prefix}_ref",
+        )
+
+    notes = st.text_area(
+        "ملاحظات (اختياري):",
+        key=f"{key_prefix}_notes",
+        height=60,
+    )
+
+    return {
+        "amount": float(amount),
+        "method": method_key,
+        "cash_box_id": int(box_id),
+        "reference": ref_no or None,
+        "notes": notes or None,
+    }
+
+
+# ==========================================
+# قسم الدفع للفاتورة المحفوظة
+# ==========================================
 def render_payment_section(db, invoice):
-    """قسم سداد الفاتورة (كلي أو جزئي) + سجل المدفوعات."""
     net = float(invoice.net_amount or 0)
     paid = _get_invoice_paid_amount(db, invoice)
     remaining = max(0.0, net - paid)
@@ -279,7 +361,6 @@ def render_payment_section(db, invoice):
     st.markdown("---")
     st.markdown("### 💰 سداد الفاتورة")
 
-    # ✅ 3 مؤشرات
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("إجمالي الفاتورة", f"{net:,.2f} ج.م")
@@ -287,34 +368,28 @@ def render_payment_section(db, invoice):
         st.metric("المدفوع", f"{paid:,.2f} ج.م")
     with col3:
         if remaining > 0:
-            st.metric("المتبقي", f"{remaining:,.2f} ج.م", delta=f"-{remaining:,.2f}", delta_color="inverse")
+            st.metric("المتبقي", f"{remaining:,.2f} ج.م",
+                      delta=f"-{remaining:,.2f}", delta_color="inverse")
         else:
             st.metric("المتبقي", "0.00 ج.م", delta="مسددة", delta_color="off")
 
-    # ✅ لو الفاتورة مسددة
     if remaining <= 0:
         st.success("✅ هذه الفاتورة مسددة بالكامل.")
     else:
-        # ✅ نموذج الدفع
         st.markdown("#### 💵 تسجيل دفعة جديدة")
-        st.caption(
-            f"**المتبقي:** {remaining:,.2f} ج.م — "
-            "يمكنك دفع المبلغ كاملًا، أو دفعه على أجزاء."
-        )
+        st.caption(f"**المتبقي:** {remaining:,.2f} ج.م — يمكنك دفع المبلغ كاملًا أو على أجزاء.")
 
-        # جلب الخزائن
         cash_boxes = db.query(models.CashBox).filter(
             models.CashBox.is_active == True
         ).all()
 
         if not cash_boxes:
-            st.error("⚠️ لا توجد خزائن مفعّلة! أضف خزينة أولاً من صفحة 'الخزائن'.")
+            st.error("⚠️ لا توجد خزائن مفعّلة!")
         else:
             box_opts = {b.id: f"{b.name} ({b.code})" for b in cash_boxes}
 
             with st.form(f"inv_payment_form_{invoice.id}", clear_on_submit=False):
                 col_a, col_b = st.columns(2)
-
                 with col_a:
                     amount = st.number_input(
                         "المبلغ المدفوع (ج.م):",
@@ -325,7 +400,6 @@ def render_payment_section(db, invoice):
                         format="%.2f",
                         key=f"pay_amount_{invoice.id}",
                     )
-
                 with col_b:
                     method_label = st.selectbox(
                         "طريقة الدفع:",
@@ -336,7 +410,6 @@ def render_payment_section(db, invoice):
                         (k for k, v in PAYMENT_METHODS.items() if v == method_label),
                         "cash",
                     )
-
                 col_c, col_d = st.columns(2)
                 with col_c:
                     box_id = st.selectbox(
@@ -349,15 +422,12 @@ def render_payment_section(db, invoice):
                     ref_no = st.text_input(
                         "رقم المرجع (اختياري):",
                         key=f"pay_ref_{invoice.id}",
-                        help="مثال: رقم شيك، رقم عملية تحويل بنكي",
                     )
-
                 notes = st.text_area(
                     "ملاحظات (اختياري):",
                     key=f"pay_notes_{invoice.id}",
                     height=60,
                 )
-
                 submitted = st.form_submit_button(
                     "✅ تسجيل الدفعة",
                     type="primary",
@@ -382,15 +452,13 @@ def render_payment_section(db, invoice):
                             created_by=current_user_id,
                             cash_box_id=int(box_id),
                         )
-                        # تحديث حالة الفاتورة
-                        db.expire_all()  # نتأكد من قراءة أحدث بيانات
+                        db.expire_all()
                         inv_fresh = db.query(models.Invoice).filter(
                             models.Invoice.id == invoice.id
                         ).first()
                         if inv_fresh:
                             _update_invoice_status(db, inv_fresh)
-
-                        st.success(f"✅ تم تسجيل دفعة بمبلغ {amount:,.2f} ج.م بنجاح!")
+                        st.success(f"✅ تم تسجيل دفعة {amount:,.2f} ج.م بنجاح!")
                         st.balloons()
                         st.rerun()
                 except Exception as e:
@@ -398,28 +466,39 @@ def render_payment_section(db, invoice):
                     st.error(f"❌ خطأ: {e}")
                     st.code(traceback.format_exc())
 
-    # ✅ سجل مدفوعات الفاتورة
+    # ✅ سجل المدفوعات مع زر حذف لكل دفعة
     payments = _get_invoice_payments(db, invoice)
     if payments:
         st.markdown("#### 📋 مدفوعات هذه الفاتورة")
-        rows = []
         for p in payments:
             method_ar = PAYMENT_METHODS.get(p.payment_method, p.payment_method or "—")
-            rows.append({
-                "التاريخ": p.date.strftime("%Y-%m-%d %H:%M") if p.date else "—",
-                "المبلغ": f"{float(p.amount or 0):,.2f} ج.م",
-                "الطريقة": method_ar,
-                "المرجع": p.reference_number or "—",
-                "ملاحظات": p.notes or "—",
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            col_info, col_del = st.columns([5, 1])
+            with col_info:
+                st.markdown(
+                    f"**{float(p.amount or 0):,.2f} ج.م** — {method_ar} — "
+                    f"{p.date.strftime('%Y-%m-%d %H:%M') if p.date else '—'}"
+                    + (f" — مرجع: {p.reference_number}" if p.reference_number else "")
+                    + (f" — {p.notes}" if p.notes else "")
+                )
+            with col_del:
+                if st.button("🗑 حذف", key=f"del_pay_{p.id}", use_container_width=True):
+                    if _delete_payment(db, p.id):
+                        db.expire_all()
+                        inv_fresh = db.query(models.Invoice).filter(
+                            models.Invoice.id == invoice.id
+                        ).first()
+                        if inv_fresh:
+                            _update_invoice_status(db, inv_fresh)
+                        st.success("✅ تم حذف الدفعة.")
+                        st.rerun()
+                    else:
+                        st.error("❌ فشل حذف الدفعة.")
 
 
 # ==========================================
 # عرض الفاتورة المحفوظة
 # ==========================================
 def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
-    """عرض فاتورة محفوظة: التفاصيل + المدفوعات + أزرار الإدارة."""
     try:
         invoice = (db.query(models.Invoice)
                    .filter(models.Invoice.invoice_number == inv_text).first())
@@ -440,7 +519,6 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
                 unsafe_allow_html=True,
             )
 
-        # التفاصيل العامة
         facts = {}
         for attr, title in (("invoice_type", "النوع"),
                             ("invoice_date", "التاريخ"),
@@ -466,7 +544,6 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
             for i, (k, v) in enumerate(facts.items()):
                 cols[i % len(cols)].metric(k, v)
 
-        # الأصناف
         lines = invoice_lines(db, invoice)
         if lines is None:
             st.warning("تعذّر التعرف على أصناف هذه الفاتورة.")
@@ -476,10 +553,10 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
             st.markdown("**أصناف الفاتورة:**")
             st.dataframe(pd.DataFrame(lines), use_container_width=True, hide_index=True)
 
-        # ✅ قسم المدفوعات
+        # قسم المدفوعات
         render_payment_section(db, invoice)
 
-        # ✅ إدارة الفاتورة
+        # إدارة الفاتورة
         st.markdown("---")
         st.markdown("### ⚙️ إدارة الفاتورة")
         col_edit, col_del = st.columns(2)
@@ -491,8 +568,7 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
                     data = _load_invoice_data(db, invoice)
                     _prepare_invoice_for_edit(data, fs, no_key)
                     st.session_state["_inv_edit_flash"] = (
-                        f"✏️ وضع التعديل: فاتورة {invoice.invoice_number}. "
-                        f"عدّل الأصناف/البيانات ثم اضغط **حفظ التعديلات**."
+                        f"✏️ وضع التعديل: فاتورة {invoice.invoice_number}."
                     )
                     st.rerun()
                 except Exception as e:
@@ -509,9 +585,7 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
                 try:
                     deleted_no = invoice.invoice_number
                     _delete_invoice_fully(db, invoice)
-                    st.session_state["_inv_flash"] = (
-                        f"✅ تم حذف الفاتورة {deleted_no} بالكامل."
-                    )
+                    st.session_state["_inv_flash"] = f"✅ تم حذف الفاتورة {deleted_no} بالكامل."
                     queue_state_updates(
                         delete_keys=("inv_items_editor",),
                         set_values={no_key: next_no, "invoice_items": []},
@@ -545,19 +619,17 @@ if flash:
 
 db = SessionLocal()
 
-# التحقق من بيانات أساسية
 parties = db.query(models.Party).all()
 items = db.query(models.Item).all()
 
 if not parties:
-    st.error("⚠️ لا يوجد عملاء أو موردين! يرجى إضافتهم أولاً.")
+    st.error("⚠️ لا يوجد عملاء أو موردين!")
     st.stop()
 
 if not items:
-    st.error("⚠️ لا توجد أصناف! يرجى إضافتها أولاً.")
+    st.error("⚠️ لا توجد أصناف!")
     st.stop()
 
-# 🔢 رقم الفاتورة
 used_numbers = used_invoice_numbers(db)
 next_no = (max(used_numbers) + 1) if used_numbers else 1
 no_key = fs.key("inv_no")
@@ -573,10 +645,7 @@ if is_editing:
     editing_no = st.session_state.get("_editing_invoice_no", "?")
     col_banner, col_cancel = st.columns([4, 1])
     with col_banner:
-        st.info(
-            f"🔴 **وضع التعديل** — أنت تعدّل الفاتورة **{editing_no}**. "
-            f"اضغط **💾 حفظ التعديلات** للتأكيد، أو **❌ إلغاء التعديل** للرجوع."
-        )
+        st.info(f"🔴 **وضع التعديل** — أنت تعدّل الفاتورة **{editing_no}**.")
     with col_cancel:
         if st.button("❌ إلغاء التعديل", use_container_width=True, key="cancel_edit_btn"):
             _clear_edit_state()
@@ -586,7 +655,6 @@ if is_editing:
             )
             st.rerun()
 
-# Alt+1 (جديد)
 if kb['new']:
     _clear_edit_state()
     queue_state_updates(
@@ -595,7 +663,6 @@ if kb['new']:
     )
     st.rerun()
 
-# Alt+2 (تفريغ)
 if kb['clear']:
     queue_state_updates(
         delete_keys=("inv_items_editor",),
@@ -603,7 +670,6 @@ if kb['clear']:
     )
     st.rerun()
 
-# إدخال رقم الفاتورة
 col_no, col_state = st.columns([1, 3])
 with col_no:
     inv_no = int(st.number_input("🔢 رقم الفاتورة:", min_value=1, step=1, value=next_no, key=no_key))
@@ -611,26 +677,22 @@ is_existing = inv_no in used_numbers
 with col_state:
     st.write("")
     if is_existing and not is_editing:
-        st.info(f"📂 الفاتورة رقم {inv_no} محفوظة سابقاً، وبياناتها معروضة أدناه.")
+        st.info(f"📂 الفاتورة رقم {inv_no} محفوظة سابقاً.")
     elif is_editing:
-        st.caption("✏️ في وضع التعديل — يمكنك تغيير الرقم، لكن لن يُسمح بتكراره.")
+        st.caption("✏️ في وضع التعديل.")
     else:
-        st.caption(f"✅ الرقم {inv_no} متاح. (الرقم التالي: {next_no})")
+        st.caption(f"✅ الرقم {inv_no} متاح.")
 
-# عرض فاتورة موجودة
 if is_existing and not is_editing:
     show_saved_invoice(db, inv_no, used_numbers[inv_no], next_no, no_key, fs, kb=kb)
     db.close()
     st.stop()
 
-# ==========================================
-# نموذج إنشاء فاتورة جديدة
-# ==========================================
+# نموذج الإنشاء
 invoice_type = st.radio("نوع الفاتورة:", ["sale (بيع)", "purchase (شراء)"], key=fs.key("type"))
 actual_type = "sale" if "sale" in invoice_type else "purchase"
 type_ar = "بيع" if actual_type == "sale" else "شراء"
 
-# اختيار الطرف
 if actual_type == "sale":
     customers = db.query(models.Party).filter(models.Party.type == 'customer').all()
     if not customers:
@@ -653,15 +715,11 @@ selected_party_id = st.selectbox(
     key=fs.key(f"party_{actual_type}"),
 )
 
-# الأصناف
 if 'invoice_items' not in st.session_state:
     st.session_state.invoice_items = []
 
 st.markdown("---")
 st.subheader("أصناف الفاتورة")
-
-if not CODE_FIELDS:
-    st.caption("ℹ️ البحث بالاسم فقط.")
 
 cs = CodeSearch(
     items,
@@ -676,16 +734,12 @@ cs = CodeSearch(
 cs.render_input()
 
 col1, col2, col3 = st.columns([2, 1, 1])
-
 with col1:
     sel_label = st.selectbox("الصنف:", cs.labels, key=cs.item_key)
-
 cs.sync_price(sel_label, actual_type)
 current_item = cs.by_label(sel_label)
-
 with col2:
     qty = st.number_input("الكمية:", min_value=1, step=1, key=fs.key("qty"))
-
 with col3:
     price = st.number_input("السعر:", min_value=0.0, step=0.1, key=cs.price_key)
 
@@ -701,13 +755,11 @@ if st.button("➕ إضافة للفاتورة"):
     else:
         st.error("يرجى اختيار صنف وإدخال كمية وسعر صحيحين")
 
-# جدول الأصناف
 save_clicked = False
 
 if st.session_state.invoice_items:
     st.markdown("---")
     st.subheader("تفاصيل الفاتورة")
-    st.caption("💡 عدّل الكمية/السعر مباشرة. 🗑 احذف صف. ➕ أضف صف جديد.")
 
     df_edit = pd.DataFrame([
         {
@@ -749,8 +801,6 @@ if st.session_state.invoice_items:
     else:
         subtotal = 0.0
 
-    st.metric("الإجمالي", f"{subtotal:,.2f} ج.م")
-
     col_disc, col_tax = st.columns(2)
     with col_disc:
         discount_pct = st.number_input("خصم %:", min_value=0.0, max_value=100.0,
@@ -774,8 +824,10 @@ if st.session_state.invoice_items:
     with col4:
         st.metric("الصافي", f"{net_amount:,.2f}")
 
-    st.markdown("---")
+    # ✅ قسم الدفع الاختياري في نموذج الإنشاء
+    payment_data = render_payment_section_for_new(db, net_amount, key_prefix=f"newinv_{inv_no}")
 
+    st.markdown("---")
     col_save, col_clear = st.columns([2, 1])
     with col_save:
         save_label = "💾 حفظ التعديلات" if is_editing else "💾 حفظ الفاتورة"
@@ -828,6 +880,7 @@ if st.session_state.invoice_items:
                 if changed:
                     db.commit()
 
+                # لو تعديل → نحذف القديمة
                 if is_editing:
                     old = db.query(models.Invoice).filter(models.Invoice.id == editing_id).first()
                     if old is not None:
@@ -843,9 +896,31 @@ if st.session_state.invoice_items:
                     created_by=current_user_id
                 )
 
-                # ✅ حالة مبدئية: غير مدفوعة (كانت 'paid' بالخطأ قبل كده)
-                invoice.status = 'pending'
-                db.commit()
+                # ✅ تسجيل الدفعة لو مفعّلة
+                if payment_data and payment_data.get('amount', 0) > 0:
+                    try:
+                        payment_type = 'receipt' if actual_type == 'sale' else 'payment'
+                        create_payment(
+                            party_id=selected_party_id,
+                            amount=float(payment_data['amount']),
+                            payment_type=payment_type,
+                            payment_method=payment_data['method'],
+                            reference_number=current_num_str,
+                            notes=payment_data.get('notes'),
+                            created_by=current_user_id,
+                            cash_box_id=int(payment_data['cash_box_id']),
+                        )
+                        db.expire_all()
+                        inv_fresh = db.query(models.Invoice).filter(
+                            models.Invoice.id == invoice.id
+                        ).first()
+                        if inv_fresh:
+                            _update_invoice_status(db, inv_fresh)
+                    except Exception as pay_err:
+                        st.warning(f"⚠️ تم حفظ الفاتورة، لكن فشل تسجيل الدفعة: {pay_err}")
+                else:
+                    invoice.status = 'pending'
+                    db.commit()
 
                 action_word = "تعديل" if is_editing else "حفظ"
                 saved_msg = f"✅ تم {action_word} فاتورة {type_ar} رقم {current_num_str} بنجاح!"
@@ -864,6 +939,6 @@ if st.session_state.invoice_items:
                 db.close()
                 fs.reset()
 else:
-    st.info("🛒 السلة فارغة. أضف أصنافاً لبدء الفاتورة.")
+    st.info("🛒 السلة فارغة.")
 
 db.close()
