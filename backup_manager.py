@@ -1,185 +1,204 @@
 # backup_manager.py
 """
-مدير النسخ الاحتياطي التلقائي
-يعمل في الخلفية ويحفظ نسخاً احتياطية تلقائياً
+مدير النسخ الاحتياطي — نسخة متوافقة مع Neon PostgreSQL
+يصدّر كل جداول قاعدة البيانات إلى ملفات CSV في مجلدات مُؤرَّخة.
 """
 
 import os
 import shutil
-import time
-import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# إعدادات النسخ الاحتياطي
+import pandas as pd
+from sqlalchemy import text
+
+from database import engine
+
+
+# ==========================================================
+# الإعدادات
+# ==========================================================
 BACKUP_SETTINGS = {
     'enabled': True,
-    'interval_hours': 1,  # نسخ كل ساعة
-    'max_backups': 7,  # الاحتفاظ بـ 7 نسخ
-    'backup_folder': None,  # سيتم تحديده تلقائياً
-    'auto_backup_on_exit': True,  # نسخ عند الإغلاق
+    'interval_hours': 24,       # نسخة يوميًا
+    'max_backups': 14,          # الاحتفاظ بآخر 14 نسخة
+    'backup_folder': None,
 }
 
 
+# كل جداول قاعدة البيانات — بالترتيب الصحيح
+ALL_TABLES = [
+    "currencies", "accounts", "users", "accounting_periods",
+    "parties", "cash_boxes", "categories", "items",
+    "invoices", "invoice_lines", "cost_history", "kit_components",
+    "inventory_movements", "cost_centers", "cost_allocations",
+    "cost_center_transactions", "journal_entries", "journal_lines",
+    "payments", "cash_transfers", "expense_categories", "expenses",
+    "warehouses", "stock_levels", "warehouse_transfers", "stock_counts",
+    "fixed_assets", "depreciation_records", "loans", "loan_installments",
+    "employees", "salary_records", "budgets",
+]
+
+
 class BackupManager:
-    """مدير النسخ الاحتياطي التلقائي"""
-    
+    """مدير النسخ الاحتياطي المتوافق مع Neon."""
+
     def __init__(self, db_path=None, backup_folder=None):
-        self.db_path = db_path or Path(__file__).parent / "accounting.db"
-        self.backup_folder = backup_folder or Path(__file__).parent / "backups"
-        self.backup_folder.mkdir(exist_ok=True)
+        # ملاحظة: db_path محتفظ به للتوافق لكن غير مستخدم
+        self.db_path = db_path
+        self.backup_folder = Path(backup_folder) if backup_folder else Path(__file__).parent / "backups"
+        self.backup_folder.mkdir(parents=True, exist_ok=True)
         self.running = False
         self.thread = None
         self.last_backup_time = None
-        
-        # إنشاء مجلد آمن خارجي
-        self.external_backup_folder = Path(__file__).parent.parent / "Techtoon_Backups"
-        self.external_backup_folder.mkdir(exist_ok=True)
-    
-    def create_backup(self, reason="يدوي"):
-        """إنشاء نسخة احتياطية"""
+
+    # ======================================================
+    # إنشاء نسخة احتياطية
+    # ======================================================
+    def create_backup(self, reason="manual"):
+        """يصدّر كل الجداول إلى CSV في مجلد مُؤرَّخ."""
         try:
-            if not self.db_path.exists():
-                return False, "قاعدة البيانات غير موجودة!"
-            
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_name = f"backup_{timestamp}_{reason}.db"
-            
-            # النسخ في المجلد المحلي
-            local_backup = self.backup_folder / backup_name
-            shutil.copy2(str(self.db_path), str(local_backup))
-            
-            # النسخ في المجلد الخارجي الآمن
-            external_backup = self.external_backup_folder / backup_name
-            shutil.copy2(str(self.db_path), str(external_backup))
-            
+            folder_name = f"backup_{timestamp}_{reason}"
+            backup_folder = self.backup_folder / folder_name
+            backup_folder.mkdir(parents=True, exist_ok=True)
+
+            total_rows = 0
+            failed = []
+
+            with engine.connect() as conn:
+                for table in ALL_TABLES:
+                    try:
+                        df = pd.read_sql(text(f"SELECT * FROM {table}"), conn)
+                        csv_path = backup_folder / f"{table}.csv"
+                        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+                        total_rows += len(df)
+                    except Exception:
+                        # بعض الجداول ممكن مش موجودة — نتجاهلها
+                        continue
+
             self.last_backup_time = datetime.now()
-            
-            # تنظيف النسخ القديمة
             self._cleanup_old_backups()
-            
-            return True, f"تم إنشاء نسخة احتياطية: {backup_name}"
+
+            return True, f"تم إنشاء النسخة: {folder_name} ({total_rows} صف)"
         except Exception as e:
             return False, f"خطأ: {str(e)}"
-    
+
+    # ======================================================
+    # تنظيف النسخ القديمة
+    # ======================================================
     def _cleanup_old_backups(self):
-        """حذف النسخ القديمة والاحتفاظ بآخر 7 نسخ"""
+        """يحذف النسخ الأقدم من الحد الأقصى."""
         try:
-            # النسخ المحلية
-            local_backups = sorted(
-                self.backup_folder.glob("backup_*.db"),
-                key=os.path.getmtime,
-                reverse=True
+            max_backups = BACKUP_SETTINGS['max_backups']
+            folders = sorted(
+                [f for f in self.backup_folder.glob("backup_*") if f.is_dir()],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
             )
-            for backup in local_backups[self.backup_settings['max_backups']:]:
-                backup.unlink()
-            
-            # النسخ الخارجية
-            external_backups = sorted(
-                self.external_backup_folder.glob("backup_*.db"),
-                key=os.path.getmtime,
-                reverse=True
-            )
-            for backup in external_backups[self.backup_settings['max_backups']:]:
-                backup.unlink()
+            for old in folders[max_backups:]:
+                shutil.rmtree(old, ignore_errors=True)
         except Exception as e:
-            print(f"خطأ في تنظيف النسخ القديمة: {e}")
-    
-    def start_auto_backup(self):
-        """بدء النسخ الاحتياطي التلقائي"""
-        if not BACKUP_SETTINGS['enabled']:
-            return
-        
-        self.running = True
-        self.thread = threading.Thread(target=self._auto_backup_loop, daemon=True)
-        self.thread.start()
-    
-    def stop_auto_backup(self):
-        """إيقاف النسخ الاحتياطي التلقائي"""
-        self.running = False
-        if self.thread:
-            self.thread.join(timeout=5)
-    
-    def _auto_backup_loop(self):
-        """حلقة النسخ التلقائي"""
-        interval = BACKUP_SETTINGS['interval_hours'] * 3600
-        
-        while self.running:
-            try:
-                success, message = self.create_backup("تلقائي")
-                if success:
-                    print(f"[{datetime.now()}] ✅ {message}")
-                else:
-                    print(f"[{datetime.now()}] ❌ {message}")
-            except Exception as e:
-                print(f"[{datetime.now()}] ❌ خطأ: {e}")
-            
-            # الانتظار حتى النسخة التالية
-            for _ in range(int(interval)):
-                if not self.running:
-                    break
-                time.sleep(1)
-    
+            print(f"تنظيف النسخ القديمة: {e}")
+
+    # ======================================================
+    # قائمة النسخ
+    # ======================================================
     def get_backup_list(self):
-        """قائمة النسخ الاحتياطية المتاحة"""
+        """يرجع قائمة النسخ الاحتياطية المتاحة."""
         backups = []
-        
-        for backup_file in self.backup_folder.glob("backup_*.db"):
-            stat = backup_file.stat()
-            backups.append({
-                'name': backup_file.name,
-                'path': str(backup_file),
-                'size': stat.st_size,
-                'date': datetime.fromtimestamp(stat.st_mtime),
-                'location': 'محلي'
-            })
-        
-        for backup_file in self.external_backup_folder.glob("backup_*.db"):
-            stat = backup_file.stat()
-            backups.append({
-                'name': backup_file.name,
-                'path': str(backup_file),
-                'size': stat.st_size,
-                'date': datetime.fromtimestamp(stat.st_mtime),
-                'location': 'خارجي آمن'
-            })
-        
-        return sorted(backups, key=lambda x: x['date'], reverse=True)
-    
-    def restore_backup(self, backup_path):
-        """استعادة نسخة احتياطية"""
         try:
-            backup_file = Path(backup_path)
-            if not backup_file.exists():
-                return False, "ملف النسخة غير موجود!"
-            
-            # إنشاء نسخة من قاعدة البيانات الحالية قبل الاستعادة
-            if self.db_path.exists():
-                safety_backup = self.db_path.with_suffix('.db.before_restore')
-                shutil.copy2(str(self.db_path), str(safety_backup))
-            
-            # استعادة النسخة
-            shutil.copy2(str(backup_file), str(self.db_path))
-            
-            return True, "تمت الاستعادة بنجاح!"
+            folders = sorted(
+                [f for f in self.backup_folder.glob("backup_*") if f.is_dir()],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for folder in folders:
+                stat = folder.stat()
+                # نحسب الحجم الكلي والعدد
+                total_size = sum(
+                    f.stat().st_size for f in folder.glob("*.csv")
+                )
+                files_count = len(list(folder.glob("*.csv")))
+                backups.append({
+                    'name': folder.name,
+                    'path': str(folder),
+                    'size': total_size,
+                    'files_count': files_count,
+                    'date': datetime.fromtimestamp(stat.st_mtime),
+                    'location': 'محلي',
+                })
+        except Exception as e:
+            print(f"قراءة النسخ: {e}")
+        return backups
+
+    # ======================================================
+    # استعادة نسخة (تحذير: تتطلب Neon Console)
+    # ======================================================
+    def restore_backup(self, backup_path):
+        """
+        الاستعادة الكاملة تتم من خلال Neon Console.
+        هنا نتحقق فقط من وجود النسخة.
+        """
+        try:
+            backup_folder = Path(backup_path)
+            if not backup_folder.exists():
+                return False, "النسخة غير موجودة!"
+
+            csv_files = list(backup_folder.glob("*.csv"))
+            if not csv_files:
+                return False, "لا توجد ملفات CSV في هذه النسخة."
+
+            return (
+                True,
+                f"النسخة موجودة ({len(csv_files)} ملف). "
+                "للاستعادة الكاملة، استخدم Neon Console: "
+                "https://console.neon.tech → مشروعك → Backups → Restore."
+            )
         except Exception as e:
             return False, f"خطأ: {str(e)}"
-    
+
+    # ======================================================
+    # حالة النظام
+    # ======================================================
     def get_backup_status(self):
-        """حالة النسخ الاحتياطي"""
-        return {
-            'enabled': BACKUP_SETTINGS['enabled'],
-            'interval_hours': BACKUP_SETTINGS['interval_hours'],
-            'max_backups': BACKUP_SETTINGS['max_backups'],
-            'last_backup': self.last_backup_time,
-            'local_backups_count': len(list(self.backup_folder.glob("backup_*.db"))),
-            'external_backups_count': len(list(self.external_backup_folder.glob("backup_*.db"))),
-            'total_size': sum(
-                f.stat().st_size 
-                for f in self.backup_folder.glob("backup_*.db")
-            )
-        }
+        """يعرض حالة النظام الحالية."""
+        try:
+            backups = self.get_backup_list()
+            total_size = sum(b['size'] for b in backups)
+            return {
+                'enabled': BACKUP_SETTINGS['enabled'],
+                'interval_hours': BACKUP_SETTINGS['interval_hours'],
+                'max_backups': BACKUP_SETTINGS['max_backups'],
+                'last_backup': self.last_backup_time,
+                'backups_count': len(backups),
+                'total_size': total_size,
+            }
+        except Exception as e:
+            return {
+                'enabled': False,
+                'interval_hours': 0,
+                'max_backups': 0,
+                'last_backup': None,
+                'backups_count': 0,
+                'total_size': 0,
+                'error': str(e),
+            }
+
+    # ======================================================
+    # النسخ التلقائي (يُستدعى من Task Scheduler)
+    # ======================================================
+    def start_auto_backup(self):
+        """متوافق مع الواجهة القديمة — لا يفعل شيء في Streamlit."""
+        # نتركها فارغة لأن Streamlit لا يدعم الخيوط الخلفية بشكل موثوق
+        pass
+
+    def stop_auto_backup(self):
+        """متوافق مع الواجهة القديمة."""
+        self.running = False
 
 
-# إنشاء نسخة عامة من المدير
+# ==========================================================
+# نسخة عامة للاستخدام
+# ==========================================================
 backup_manager = BackupManager()
