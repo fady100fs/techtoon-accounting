@@ -269,10 +269,14 @@ class BackupManager:
             }
 
     # ======================================================
-    # واجهة تغيير مكان النسخ (تُستدعى من صفحة النسخ)
+    # واجهة تغيير مكان النسخ (مع key_suffix فريد)
     # ======================================================
-    def render_folder_settings(self):
-        """واجهة تغيير مكان النسخ الاحتياطي."""
+    def render_folder_settings(self, key_suffix="main"):
+        """واجهة تغيير مكان النسخ الاحتياطي.
+
+        Args:
+            key_suffix: بادئة فريدة لكل استدعاء (لتفادي تكرار الـ keys).
+        """
         import streamlit as st
 
         st.markdown("#### 📁 مكان النسخ الاحتياطي")
@@ -282,13 +286,18 @@ class BackupManager:
         new_path = st.text_input(
             "المكان الجديد (اكتب المسار الكامل):",
             value=current,
-            key="backup_folder_input",
+            key=f"backup_folder_input_{key_suffix}",
             help=r"مثال: D:\Backups  أو  C:\Users\fady\Documents\Techtoon_Backups",
         )
 
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("✅ تعيين المكان", type="primary", use_container_width=True):
+            if st.button(
+                "✅ تعيين المكان",
+                type="primary",
+                use_container_width=True,
+                key=f"backup_folder_set_{key_suffix}",
+            ):
                 ok, msg = self.set_backup_folder(new_path)
                 if ok:
                     st.success(msg)
@@ -296,7 +305,11 @@ class BackupManager:
                 else:
                     st.error(msg)
         with col2:
-            if st.button("🔄 استعادة الافتراضي", use_container_width=True):
+            if st.button(
+                "🔄 استعادة الافتراضي",
+                use_container_width=True,
+                key=f"backup_folder_reset_{key_suffix}",
+            ):
                 ok, msg = self.reset_backup_folder()
                 if ok:
                     st.success(msg)

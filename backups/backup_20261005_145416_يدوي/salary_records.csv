@@ -1,0 +1,1 @@
+﻿id,employee_id,month,year,basic_salary,allowances,overtime,bonus,gross_salary,social_insurance,tax,other_deductions,total_deductions,net_salary,payment_date,payment_method,status,notes,created_by,created_at

@@ -1,0 +1,4 @@
+﻿id,name,code,type,account_id,responsible_person,max_limit,is_active,notes,created_at
+1,الخزينة الرئيسية,CB001,CASH,18,أمين الصندوق,0.0,True,,2026-10-01 20:50:23.104599
+2,بنك الأهلي,BANK01,BANK,19,المحاسب,0.0,True,,2026-10-01 20:50:23.105599
+3,فودافون كاش,WALLET01,WALLET,20,,0.0,True,,2026-10-01 20:50:23.105599

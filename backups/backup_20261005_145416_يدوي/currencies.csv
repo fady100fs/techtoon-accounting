@@ -1,0 +1,4 @@
+﻿id,code,name,symbol,exchange_rate,is_default
+1,EGP,جنيه مصري,ج.م,1.0,True
+2,USD,دولار أمريكي,$,48.5,False
+3,SAR,ريال سعودي,ر.س,12.9,False
