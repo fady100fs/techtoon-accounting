@@ -17,6 +17,7 @@ from models import Account, AccountType
 from services import movement_serial, validate_journal_entry
 from period_guard import check_period_open
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -24,7 +25,15 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="قيود اليومية", page_icon="📝", layout="wide")
 st.title("📝 قيود اليومية اليدوية")
+show_clear_hint()   # ✅ تلميح
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
+
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لمفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "je_"
+
 
 db = SessionLocal()
 
@@ -114,14 +123,22 @@ with tab1:
 
     col_d, col_t = st.columns(2)
     with col_d:
-        je_date = st.date_input("التاريخ:", value=date.today(), key="mje_date")
+        je_date = st.date_input(
+            "التاريخ:",
+            value=date.today(),
+            key=f"{PFX}date",   # ✅
+        )
     with col_t:
-        je_time = st.time_input("الوقت:", value=datetime.now().time(), key="mje_time")
+        je_time = st.time_input(
+            "الوقت:",
+            value=datetime.now().time(),
+            key=f"{PFX}time",   # ✅
+        )
 
     je_desc = st.text_area(
         "البيان (وصف القيد):",
         placeholder="مثال: قيد افتتاحي — إثبات رأس المال الافتتاحي",
-        key="mje_desc",
+        key=f"{PFX}desc",   # ✅
         height=68,
     )
 
@@ -152,7 +169,7 @@ with tab1:
         default_df,
         num_rows="dynamic",
         use_container_width=True,
-        key="mje_editor",
+        key=f"{PFX}editor",   # ✅
         column_config={
             "الحساب": st.column_config.SelectboxColumn(
                 "الحساب",
@@ -208,11 +225,12 @@ with tab1:
             type="primary",
             use_container_width=True,
             disabled=not is_balanced,
-            key="mje_save",
+            key=f"{PFX}save",
         )
     with col_clear:
-        if st.button("🗑 تفريغ الأسطر", use_container_width=True, key="mje_clear"):
-            queue_state_updates(delete_keys=("mje_editor", "mje_desc"))
+        if st.button("🗑 تفريغ الأسطر", use_container_width=True,
+                     key=f"{PFX}clear_btn"):
+            clear_form(PFX)
             st.rerun()
 
     if save_btn:
@@ -284,7 +302,8 @@ with tab1:
                 st.success(f"✅ تم حفظ القيد `{_serial(entry.id)}` بنجاح!")
                 st.balloons()
 
-                queue_state_updates(delete_keys=("mje_editor", "mje_desc"))
+                # ✅ تفريغ كل حقول النموذج
+                clear_form(PFX)
                 st.rerun()
 
             except Exception as e:
@@ -303,17 +322,21 @@ with tab2:
     col_d1, col_d2, col_d3 = st.columns(3)
     with col_d1:
         f_start = st.date_input(
-            "من:", value=datetime.now().replace(day=1).date(), key="je_f_start"
+            "من:",
+            value=datetime.now().replace(day=1).date(),
+            key=f"{PFX}filter_start",
         )
     with col_d2:
         f_end = st.date_input(
-            "إلى:", value=datetime.now().date(), key="je_f_end"
+            "إلى:",
+            value=datetime.now().date(),
+            key=f"{PFX}filter_end",
         )
     with col_d3:
         f_type = st.selectbox(
             "النوع:",
             ["الكل", "📝 يدوي فقط", "معاكس يدوي", "تلقائي فقط"],
-            key="je_f_type",
+            key=f"{PFX}filter_type",
         )
 
     start_dt = datetime.combine(f_start, datetime.min.time())
@@ -343,7 +366,7 @@ with tab2:
         if total_pages > 1:
             page_num = st.number_input(
                 "صفحة:", min_value=1, max_value=total_pages,
-                value=1, step=1, key="je_page"
+                value=1, step=1, key=f"{PFX}page_num"
             )
         else:
             page_num = 1
@@ -360,7 +383,6 @@ with tab2:
             models.JournalLine.entry_id.in_(entry_ids)
         ).all()
 
-        # تجميع المدين/الدائن لكل قيد
         totals = {}
         for l in all_lines:
             if l.entry_id not in totals:
@@ -400,12 +422,14 @@ with tab2:
         if total_pages > 1:
             col_prev, col_next = st.columns(2)
             with col_prev:
-                if st.button("⬅️ السابق", disabled=(page_num <= 1), key="je_prev"):
-                    st.session_state["je_page"] = page_num - 1
+                if st.button("⬅️ السابق", disabled=(page_num <= 1),
+                             key=f"{PFX}prev"):
+                    st.session_state[f"{PFX}page_num"] = page_num - 1
                     st.rerun()
             with col_next:
-                if st.button("التالي ➡️", disabled=(page_num >= total_pages), key="je_next"):
-                    st.session_state["je_page"] = page_num + 1
+                if st.button("التالي ➡️", disabled=(page_num >= total_pages),
+                             key=f"{PFX}next"):
+                    st.session_state[f"{PFX}page_num"] = page_num + 1
                     st.rerun()
 
         # تفاصيل قيد محدد
@@ -416,7 +440,7 @@ with tab2:
             "اختر قيداً للعرض:",
             options=list(je_opts.keys()),
             format_func=lambda x: je_opts[x],
-            key="je_view_sel",
+            key=f"{PFX}view_sel",
         )
 
         if selected_view_id:
@@ -475,7 +499,7 @@ with tab3:
             "اختر قيداً:",
             options=list(je_opts.keys()),
             format_func=lambda x: je_opts[x],
-            key="je_manage_sel",
+            key=f"{PFX}manage_sel",
         )
 
         if selected_id:
@@ -531,7 +555,7 @@ with tab3:
                             "🔄 إنشاء قيد عكسي",
                             type="primary",
                             use_container_width=True,
-                            key=f"reverse_{entry.id}",
+                            key=f"{PFX}reverse_{entry.id}",
                         ):
                             try:
                                 check_period_open(datetime.now(), entity="ترحيل عكسي")
@@ -559,7 +583,9 @@ with tab3:
                                 db.commit()
 
                                 st.success(f"✅ تم إنشاء القيد العكسي `{_serial(rev_entry.id)}`")
-                                queue_state_updates(delete_keys=("je_manage_sel",))
+
+                                # ✅ تفريغ كل مفاتيح الصفحة
+                                clear_form(PFX)
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()
@@ -573,14 +599,14 @@ with tab3:
 
                         confirm = st.checkbox(
                             "أؤكد الحذف النهائي",
-                            key=f"confirm_del_je_{entry.id}",
+                            key=f"{PFX}confirm_del_{entry.id}",
                         )
                         if st.button(
                             "🗑 حذف القيد",
                             type="secondary",
                             disabled=not confirm,
                             use_container_width=True,
-                            key=f"del_je_{entry.id}",
+                            key=f"{PFX}del_btn_{entry.id}",
                         ):
                             try:
                                 if entry.date:
@@ -593,7 +619,9 @@ with tab3:
                                 db.commit()
 
                                 st.success(f"✅ تم حذف القيد `{_serial(entry.id)}`.")
-                                queue_state_updates(delete_keys=("je_manage_sel",))
+
+                                # ✅ تفريغ كل مفاتيح الصفحة
+                                clear_form(PFX)
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()
