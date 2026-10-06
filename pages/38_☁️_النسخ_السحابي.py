@@ -23,6 +23,13 @@ from s3_backup import (
 )
 from settings_manager import get_setting, set_setting, set_many_settings
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "s3_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -30,6 +37,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="النسخ السحابي", page_icon="☁️", layout="wide")
 st.title("☁️ النسخ الاحتياطي السحابي")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 # تهيئة الإعدادات الافتراضية
@@ -154,7 +163,7 @@ with tab_config:
         s3_enabled = st.checkbox(
             "تفعيل النسخ السحابي",
             value=get_setting("s3_enabled", False),
-            key="s3_cfg_enabled",
+            key=f"{PFX}s3_cfg_enabled",
             disabled=is_readonly,
         )
 
@@ -165,7 +174,7 @@ with tab_config:
             value=get_setting("s3_endpoint_url", ""),
             placeholder="https://s3.us-east-005.backblazeb2.com",
             help="اتركه فارغاً لـ AWS S3",
-            key="s3_cfg_endpoint",
+            key=f"{PFX}s3_cfg_endpoint",
             disabled=is_readonly,
         )
 
@@ -175,7 +184,7 @@ with tab_config:
                 "Region:",
                 value=get_setting("s3_region", "us-east-1"),
                 placeholder="us-east-005",
-                key="s3_cfg_region",
+                key=f"{PFX}s3_cfg_region",
                 disabled=is_readonly,
             )
         with col_b:
@@ -183,7 +192,7 @@ with tab_config:
                 "Bucket Name:",
                 value=get_setting("s3_bucket", ""),
                 placeholder="my-backup-bucket",
-                key="s3_cfg_bucket",
+                key=f"{PFX}s3_cfg_bucket",
                 disabled=is_readonly,
             )
 
@@ -195,7 +204,7 @@ with tab_config:
                 "Access Key ID:",
                 value=get_setting("s3_access_key", ""),
                 type="default",
-                key="s3_cfg_access",
+                key=f"{PFX}s3_cfg_access",
                 disabled=is_readonly,
             )
         with col_d:
@@ -203,7 +212,7 @@ with tab_config:
                 "Secret Access Key:",
                 value=get_setting("s3_secret_key", ""),
                 type="password",
-                key="s3_cfg_secret",
+                key=f"{PFX}s3_cfg_secret",
                 disabled=is_readonly,
             )
 
@@ -213,7 +222,7 @@ with tab_config:
             "Prefix (بادئة المسار):",
             value=get_setting("s3_prefix", "techtoon-backups/"),
             help="مسار مجلد النسخ داخل الـ Bucket",
-            key="s3_cfg_prefix",
+            key=f"{PFX}s3_cfg_prefix",
             disabled=is_readonly,
         )
 
@@ -234,6 +243,7 @@ with tab_config:
                     "s3_prefix": prefix.strip() or "techtoon-backups/",
                 }, user_id=current_user_id)
                 st.success("✅ تم حفظ الإعدادات.")
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -243,7 +253,7 @@ with tab_config:
     if not is_readonly:
         col_x, col_y = st.columns([3, 1])
         with col_y:
-            if st.button("🔌 اختبار الاتصال", use_container_width=True, key="s3_test_btn"):
+            if st.button("🔌 اختبار الاتصال", use_container_width=True, key=f"{PFX}s3_test_btn"):
                 with st.spinner("جاري الاختبار..."):
                     ok, msg = test_connection()
                 if ok:
@@ -281,7 +291,7 @@ with tab_backup:
                     "daily": "📅 يومي",
                     "weekly": "📆 أسبوعي",
                 }.get(x, x),
-                key="s3_backup_reason",
+                key=f"{PFX}s3_backup_reason",
             )
         with col_b:
             st.write("")
@@ -299,6 +309,7 @@ with tab_backup:
                     - عدد الجداول: `{info['tables_count']}`
                     - إجمالي الصفوف: `{info['total_rows']:,}`
                     """)
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 else:
                     st.error(msg)
@@ -354,7 +365,7 @@ with tab_restore:
                 "اختر نسخة:",
                 options=list(backup_opts.keys()),
                 format_func=lambda x: backup_opts[x],
-                key="s3_restore_sel",
+                key=f"{PFX}s3_restore_sel",
             )
 
             if selected_key:
@@ -365,7 +376,7 @@ with tab_restore:
                     st.markdown("### 📥 تنزيل فقط")
                     st.caption("لأخذ نسخة محلية بدون استعادة.")
 
-                    if st.button("⬇️ تنزيل الملف", use_container_width=True, key="s3_download_btn"):
+                    if st.button("⬇️ تنزيل الملف", use_container_width=True, key=f"{PFX}s3_download_btn"):
                         with st.spinner("جاري التنزيل..."):
                             ok, msg, data = download_backup(selected_key)
 
@@ -377,7 +388,7 @@ with tab_restore:
                                 data=data,
                                 file_name=filename,
                                 mime="application/zip",
-                                key="s3_download_file",
+                                key=f"{PFX}s3_download_file",
                             )
                         else:
                             st.error(msg)
@@ -392,13 +403,13 @@ with tab_restore:
 
                         confirm = st.checkbox(
                             "أؤكد أنني أريد الاستعادة",
-                            key="s3_restore_confirm",
+                            key=f"{PFX}s3_restore_confirm",
                         )
                         dry_run = st.checkbox(
                             "وضع التجربة (بدون كتابة)",
                             value=True,
                             help="يعرض ما سيحدث دون تنفيذ",
-                            key="s3_restore_dry",
+                            key=f"{PFX}s3_restore_dry",
                         )
 
                         if st.button(
@@ -406,7 +417,7 @@ with tab_restore:
                             type="primary",
                             disabled=not confirm,
                             use_container_width=True,
-                            key="s3_restore_btn",
+                            key=f"{PFX}s3_restore_btn",
                         ):
                             with st.spinner("جاري التنزيل والاستعادة..."):
                                 ok, msg, data = download_backup(selected_key)
@@ -450,7 +461,7 @@ with tab_settings:
             value=status["max_backups"],
             step=1,
             help="عند تجاوز هذا العدد، تُحذف الأقدم تلقائياً",
-            key="s3_max_backups",
+            key=f"{PFX}s3_max_backups",
             disabled=is_readonly,
         )
 
@@ -458,7 +469,7 @@ with tab_settings:
             "حذف النسخ القديمة تلقائياً",
             value=status["auto_cleanup"],
             help="ينظف النسخ القديمة بعد كل رفع جديد",
-            key="s3_auto_cleanup",
+            key=f"{PFX}s3_auto_cleanup",
             disabled=is_readonly,
         )
 
@@ -474,6 +485,7 @@ with tab_settings:
                     "s3_auto_cleanup": str(auto_cleanup).lower(),
                 }, user_id=current_user_id)
                 st.success("✅ تم الحفظ.")
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ {e}")
@@ -485,11 +497,12 @@ with tab_settings:
     st.caption("حذف النسخ الأقدم من الحد المحدد.")
 
     if not is_readonly:
-        if st.button("🧹 تنظيف النسخ القديمة", use_container_width=True, key="s3_cleanup_btn"):
+        if st.button("🧹 تنظيف النسخ القديمة", use_container_width=True, key=f"{PFX}s3_cleanup_btn"):
             with st.spinner("جاري التنظيف..."):
                 count, msg = cleanup_old_backups()
             if count > 0:
                 st.success(msg)
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             else:
                 st.info(msg)

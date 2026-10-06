@@ -11,9 +11,18 @@ import streamlit as st
 import pandas as pd
 from alerts import get_all_alerts, get_low_stock_items, get_overdue_invoices, get_credit_limit_warnings
 from auth_required import require_login
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "alerts_"
+
 current_user = require_login()
 st.set_page_config(page_title="التنبيهات", page_icon="", layout="wide")
 st.title(" مركز التنبيهات")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 # الحصول على جميع التنبيهات
 alerts = get_all_alerts()

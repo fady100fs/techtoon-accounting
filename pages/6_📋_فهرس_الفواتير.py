@@ -14,7 +14,14 @@ import models
 from models import CashBox
 from services import create_payment, movement_serial
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
 from cache_helpers import get_invoices_index, invalidate_all
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "inv_idx_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -22,6 +29,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="فهرس الفواتير", page_icon="📋", layout="wide")
 st.title("📋 فهرس الفواتير")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 db = SessionLocal()
 
@@ -71,7 +80,7 @@ try:
                 max_value=total_pages,
                 value=1,
                 step=1,
-                key="inv_page_num"
+                key=f"{PFX}inv_page_num"
             )
 
         start = (page_num - 1) * PAGE_SIZE
@@ -115,7 +124,7 @@ try:
             "اختر فاتورة:",
             options=invoice_ids,
             format_func=lambda x: invoice_nums.get(x, str(x)),
-            key="idx_selected_invoice"
+            key=f"{PFX}idx_selected_invoice"
         )
 
         if selected_invoice_id:
@@ -227,6 +236,7 @@ try:
                     db.commit()
                     invalidate_all()
                     st.success(f"✅ تم تحديث الحالة! (بواسطة: {current_user_name})")
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
 
                 st.markdown("---")
@@ -352,6 +362,7 @@ try:
                                 st.success(
                                     f"✅ تم تسجيل دفعة {payment_amount:,.2f} ج.م!"
                                 )
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ خطأ: {e}")

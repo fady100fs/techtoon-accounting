@@ -11,13 +11,22 @@ import streamlit as st
 import pandas as pd
 from reminders import get_overdue_invoices_reminders, export_reminders_to_excel
 from auth_required import require_login
+from form_manager import clear_form, show_clear_hint
 from datetime import datetime
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "rem_"
+
 
 # التحقق من تسجيل الدخول
 current_user = require_login()
 
 st.set_page_config(page_title="مركز التذكيرات", page_icon="🔔", layout="wide")
 st.title("🔔 مركز التذكيرات والمتابعات الذكية")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 st.info(f"👤 مرحباً **{current_user['full_name']}** | استخدم هذه الأدوات لمتابعة المستحقات والمخزون.")
 

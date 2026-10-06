@@ -14,12 +14,21 @@ from database import SessionLocal
 import models
 from services import check_accounting_integrity, validate_all_journal_entries
 from auth_required import require_login, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "integrity_"
+
 
 current_user = require_login()
 current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="فحص السلامة", page_icon="🔍", layout="wide")
 st.title("🔍 فحص سلامة النظام المحاسبي")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}**")
 
 st.markdown("""

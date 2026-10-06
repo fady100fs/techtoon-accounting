@@ -21,6 +21,13 @@ from services import (
     transfer_between_cost_centers
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "cc_"
+
 
 # التحقق من تسجيل الدخول
 current_user = require_login()
@@ -29,6 +36,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="مراكز التكلفة", page_icon="🏢", layout="wide")
 st.title("🏢 إدارة مراكز التكلفة")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
@@ -97,6 +106,7 @@ with tab1:
                 
                 st.success(f"✅ تم إنشاء مركز التكلفة '{center_name}' بنجاح!")
                 st.balloons()
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -207,6 +217,7 @@ with tab3:
                     
                     st.success(f"✅ تم تخصيص التكلفة بنجاح!")
                     st.balloons()
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
@@ -293,9 +304,9 @@ with tab4:
         # ملخص جميع المراكز
         col1, col2 = st.columns(2)
         with col1:
-            summary_start = st.date_input("من تاريخ:", value=datetime.now().replace(day=1), key="summary_start")
+            summary_start = st.date_input("من تاريخ:", value=datetime.now().replace(day=1), key=f"{PFX}summary_start")
         with col2:
-            summary_end = st.date_input("إلى تاريخ:", value=datetime.now(), key="summary_end")
+            summary_end = st.date_input("إلى تاريخ:", value=datetime.now(), key=f"{PFX}summary_end")
         
         if st.button("📊 عرض الملخص", type="primary"):
             summary_start_dt = datetime.combine(summary_start, datetime.min.time())
@@ -374,6 +385,7 @@ with tab5:
                     )
                     
                     st.success(f"✅ تم التحويل بنجاح: {transfer_amount:,.2f} ج.م من {result['from']} إلى {result['to']}")
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")

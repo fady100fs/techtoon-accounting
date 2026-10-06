@@ -19,6 +19,13 @@ from services import (
     get_employee_salary_history, get_monthly_payroll, get_employees_summary
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "emp_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -26,6 +33,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="الموظفين والرواتب", page_icon="👥", layout="wide")
 st.title("👥 إدارة الموظفين والرواتب")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 db = SessionLocal()
@@ -77,45 +86,45 @@ with tab1:
     col1, col2 = st.columns(2)
     with col1:
         employee_code = st.text_input("كود الموظف:", placeholder="مثال: EMP001",
-                                       key="new_emp_code")
+                                       key=f"{PFX}new_emp_code")
         full_name = st.text_input("الاسم الكامل:", placeholder="الاسم رباعي",
-                                   key="new_emp_name")
+                                   key=f"{PFX}new_emp_name")
         national_id = st.text_input("الرقم القومي:", placeholder="14 رقم",
-                                     key="new_emp_nid")
+                                     key=f"{PFX}new_emp_nid")
         phone = st.text_input("رقم الهاتف:", placeholder="01xxxxxxxxx",
-                              key="new_emp_phone")
-        email = st.text_input("البريد الإلكتروني:", key="new_emp_email")
-        address = st.text_area("العنوان:", key="new_emp_address")
+                              key=f"{PFX}new_emp_phone")
+        email = st.text_input("البريد الإلكتروني:", key=f"{PFX}new_emp_email")
+        address = st.text_area("العنوان:", key=f"{PFX}new_emp_address")
 
     with col2:
         job_title = st.text_input("المسمى الوظيفي:", placeholder="مثال: محاسب",
-                                   key="new_emp_title")
+                                   key=f"{PFX}new_emp_title")
         department = st.selectbox(
             "القسم:",
             ["الإدارة", "المحاسبة", "المبيعات", "المخازن", "التسويق",
              "تقنية المعلومات", "أخرى"],
-            key="new_emp_dept",
+            key=f"{PFX}new_emp_dept",
         )
         hire_date = st.date_input("تاريخ التعيين:", value=datetime.now().date(),
-                                   key="new_emp_hire")
+                                   key=f"{PFX}new_emp_hire")
         basic_salary = st.number_input("الراتب الأساسي:", min_value=0.0,
                                        step=500.0, format="%.2f",
-                                       key="new_emp_basic")
+                                       key=f"{PFX}new_emp_basic")
         allowances = st.number_input("البدلات:", min_value=0.0, step=100.0,
-                                     format="%.2f", key="new_emp_allow")
+                                     format="%.2f", key=f"{PFX}new_emp_allow")
         deductions = st.number_input("الخصومات الثابتة:", min_value=0.0,
                                      step=50.0, format="%.2f",
-                                     key="new_emp_deduct")
+                                     key=f"{PFX}new_emp_deduct")
         social_insurance = st.number_input("نسبة التأمينات (%):", min_value=0.0,
                                             max_value=100.0, value=11.0, step=0.5,
-                                            format="%.1f", key="new_emp_insur")
+                                            format="%.1f", key=f"{PFX}new_emp_insur")
         tax_rate = st.number_input("نسبة الضريبة (%):", min_value=0.0,
                                     max_value=100.0, value=0.0, step=0.5,
-                                    format="%.1f", key="new_emp_tax")
+                                    format="%.1f", key=f"{PFX}new_emp_tax")
         bank_account = st.text_input("رقم الحساب البنكي:",
-                                      key="new_emp_bank_acc")
-        bank_name = st.text_input("اسم البنك:", key="new_emp_bank_name")
-        notes = st.text_area("ملاحظات:", key="new_emp_notes")
+                                      key=f"{PFX}new_emp_bank_acc")
+        bank_name = st.text_input("اسم البنك:", key=f"{PFX}new_emp_bank_name")
+        notes = st.text_area("ملاحظات:", key=f"{PFX}new_emp_notes")
 
     if st.button("💾 إضافة الموظف", type="primary", use_container_width=True):
         if not employee_code or not full_name or not job_title:
@@ -168,6 +177,7 @@ with tab1:
                         "new_emp_notes": "",
                     },
                 )
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -219,7 +229,7 @@ with tab2:
                 format_func=lambda x: next(
                     (f"{e.employee_code} — {e.full_name}" for e in employees if e.id == x),
                     str(x)),
-                key="sel_emp_edit",
+                key=f"{PFX}sel_emp_edit",
             )
 
             if sel_id:
@@ -273,6 +283,7 @@ with tab2:
                             db.commit()
                             st.success("✅ تم التعديل!")
                             queue_state_updates(delete_keys=("sel_emp_edit",))
+                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                     except Exception as e:
                         db.rollback()
@@ -299,6 +310,7 @@ with tab2:
                             _delete_employee(sel_id)
                             st.success("✅ تم الحذف.")
                             queue_state_updates(delete_keys=("sel_emp_edit",))
+                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ {e}")
@@ -336,21 +348,21 @@ with tab3:
                 format_func=lambda x: next(
                     (f"{e.employee_code} - {e.full_name}" for e in active if e.id == x),
                     str(x)),
-                key="payroll_emp_sel",
+                key=f"{PFX}payroll_emp_sel",
             )
             month = st.number_input("الشهر:", min_value=1, max_value=12,
                                      value=datetime.now().month, step=1,
-                                     key="payroll_month")
+                                     key=f"{PFX}payroll_month")
             year = st.number_input("السنة:", min_value=2020, max_value=2100,
                                     value=datetime.now().year, step=1,
-                                    key="payroll_year")
+                                    key=f"{PFX}payroll_year")
         with col2:
             overtime = st.number_input("العمل الإضافي:", min_value=0.0, step=100.0,
-                                        format="%.2f", key="payroll_ot")
+                                        format="%.2f", key=f"{PFX}payroll_ot")
             bonus = st.number_input("المكافأة:", min_value=0.0, step=500.0,
-                                     format="%.2f", key="payroll_bonus")
+                                     format="%.2f", key=f"{PFX}payroll_bonus")
             other_ded = st.number_input("خصومات أخرى:", min_value=0.0, step=50.0,
-                                         format="%.2f", key="payroll_od")
+                                         format="%.2f", key=f"{PFX}payroll_od")
 
         if sel_emp_id:
             salary_data = calculate_monthly_salary(sel_emp_id, month, year,
@@ -375,7 +387,7 @@ with tab3:
             payment_method = st.selectbox(
                 "طريقة الدفع:",
                 ["bank_transfer (تحويل بنكي)", "cash (نقدي)", "check (شيك)"],
-                key="payroll_pm",
+                key=f"{PFX}payroll_pm",
             )
             actual_method = payment_method.split(" ")[0]
 
@@ -399,6 +411,7 @@ with tab3:
                         set_values={"payroll_ot": 0.0, "payroll_bonus": 0.0,
                                     "payroll_od": 0.0},
                     )
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ {e}")
@@ -414,11 +427,11 @@ with tab4:
     with col1:
         pm = st.number_input("الشهر:", min_value=1, max_value=12,
                              value=datetime.now().month, step=1,
-                             key="slip_month")
+                             key=f"{PFX}slip_month")
     with col2:
         py = st.number_input("السنة:", min_value=2020, max_value=2100,
                              value=datetime.now().year, step=1,
-                             key="slip_year")
+                             key=f"{PFX}slip_year")
 
     if st.button("📊 عرض الكشف", type="primary"):
         payroll_data = get_monthly_payroll(pm, py)
@@ -454,7 +467,7 @@ with tab5:
                 format_func=lambda x: next(
                     (f"{e.employee_code} - {e.full_name}" for e in all_emps if e.id == x),
                     str(x)),
-                key="hist_emp",
+                key=f"{PFX}hist_emp",
             )
             if eid:
                 history = get_employee_salary_history(eid)

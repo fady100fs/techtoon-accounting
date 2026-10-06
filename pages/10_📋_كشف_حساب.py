@@ -13,10 +13,19 @@ from sqlalchemy import func
 from database import SessionLocal
 import models
 from auth_required import require_login
+from form_manager import clear_form, show_clear_hint
 current_user = require_login()
 st.set_page_config(page_title="كشف حساب", page_icon="📋", layout="wide")
 st.title("📋 كشف حساب عميل/مورد")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 from keyboard_nav import enable_enter_navigation, add_enter_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "stmt_"
+
 
 # تفعيل التنقل بـ Enter
 enable_enter_navigation()

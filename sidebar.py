@@ -7,6 +7,7 @@ from pathlib import Path
 import streamlit as st
 
 from session_auth import restore_session, logout_user
+from form_manager import apply_pending_clears
 
 PAGES_DIR = Path(__file__).parent / "pages"
 
@@ -31,33 +32,27 @@ REPORTS = {"ADMIN", "ACCOUNTANT", "VIEWER"}
 SALES = {"ADMIN", "ACCOUNTANT", "SALESPERSON"}
 
 PAGE_ACCESS = {
-    # الحساب
     "تسجيل_الدخول": ALL,
     "إدارة_المستخدمين": ADMIN_ONLY,
-    # تكويد
     "الاصناف": ALL,
     "التصنيفات": MANAGEMENT,
     "عملاء": ALL,
     "شجرة_الحسابات": MANAGEMENT,
     "كشف_حساب": REPORTS,
     "العملات": MANAGEMENT,
-    # عمليات
     "الفواتير": SALES,
     "فهرس_الفواتير": ALL,
     "المدفوعات": MANAGEMENT,
     "المصروفات": MANAGEMENT,
     "الخزائن": MANAGEMENT,
     "قيود_اليومية": MANAGEMENT,
-    # مخزون
     "إدارة_المخزون": MANAGEMENT,
     "الأصول_الثابتة": MANAGEMENT,
-    # مالية
     "إدارة_القروض": MANAGEMENT,
     "الموظفين_والرواتب": ADMIN_ONLY,
     "الإغلاق_المحاسبي": MANAGEMENT,
     "مراكز_التكلفة": MANAGEMENT,
     "الميزانية_العمومية": REPORTS,
-    # تقارير
     "لوحة_التحكم": REPORTS,
     "التقارير": REPORTS,
     "تقارير_متقدمة": REPORTS,
@@ -66,12 +61,10 @@ PAGE_ACCESS = {
     "التقارير_المالية": REPORTS,
     "التنبيهات": ALL,
     "مركز_التذكيرات": ALL,
-    # أدوات
     "قارئ_الباركود": ALL,
     "الفواتير_المتكررة": MANAGEMENT,
     "البحث_الموحد": ALL,
     "تقارير_PDF": MANAGEMENT,
-    # نظام
     "النسخ_الاحتياطي": MANAGEMENT,
     "النسخ_السحابي": MANAGEMENT,
     "فحص_السلامة": MANAGEMENT,
@@ -210,7 +203,7 @@ def require_modify(action="هذه العملية"):
 
 
 # ==========================================================
-# إدارة حالة الصفحة
+# إدارة حالة الصفحة + queue_state_updates
 # ==========================================================
 _PRESERVE_KEYS = ("current_user", "_active_page")
 
@@ -219,6 +212,7 @@ _EXTRA_CLEAR_KEYS = (
     "_editing_invoice_no",
     "_editing_invoice_type",
     "_pending_state",
+    "_pending_form_clear",
     "_inv_flash",
     "_items_flash",
     "_inv_edit_flash",
@@ -251,6 +245,7 @@ def _reset_page_state_on_navigation(caller_path):
 
 
 def queue_state_updates(delete_prefixes=(), delete_keys=(), set_values=None):
+    """يؤجّل تعديل session_state إلى بداية الـ run التالي."""
     pending = st.session_state.get("_pending_state") or {"prefixes": [], "keys": [], "set": {}}
     pending["prefixes"] = list(pending["prefixes"]) + list(delete_prefixes)
     pending["keys"] = list(pending["keys"]) + list(delete_keys)
@@ -342,6 +337,9 @@ def _term_for_file(path):
 def render_sidebar():
     caller = Path(inspect.currentframe().f_back.f_code.co_filename).resolve()
 
+    # ✅ تفريغ النماذج المعلّق — قبل أي شيء آخر
+    apply_pending_clears()
+
     restore_session()
     _reset_page_state_on_navigation(caller)
     _apply_pending_state()
@@ -360,7 +358,6 @@ def render_sidebar():
         if not can_modify(user):
             st.caption("✏️ التعديل والحذف للمدير فقط")
 
-        # شريط بحث سريع
         if st.button("🔍 البحث الموحد", use_container_width=True, key="top_global_search"):
             index = _build_index()
             f = _find_page("البحث_الموحد", index)

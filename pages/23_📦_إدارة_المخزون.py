@@ -18,6 +18,13 @@ from services import (
     get_warehouse_stock_report,
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "wh_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -25,6 +32,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="إدارة المخزون", page_icon="📦", layout="wide")
 st.title("📦 إدارة المخزون المتقدمة")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 db = SessionLocal()
@@ -144,15 +153,15 @@ with tab1:
 
         wh_name = st.text_input("اسم المخزن:",
                                  placeholder="مثال: المخزن الرئيسي...",
-                                 key="new_wh_name")
+                                 key=f"{PFX}new_wh_name")
         wh_code = st.text_input("كود المخزن:",
                                  placeholder="مثال: WH001...",
-                                 key="new_wh_code")
+                                 key=f"{PFX}new_wh_code")
         wh_location = st.text_input("الموقع (اختياري):",
-                                     key="new_wh_location")
+                                     key=f"{PFX}new_wh_location")
         wh_responsible = st.text_input("المسؤول (اختياري):",
-                                        key="new_wh_responsible")
-        wh_notes = st.text_area("ملاحظات (اختياري):", key="new_wh_notes")
+                                        key=f"{PFX}new_wh_responsible")
+        wh_notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}new_wh_notes")
 
         if st.button("💾 إنشاء المخزن", type="primary", use_container_width=True):
             if not wh_name.strip() or not wh_code.strip():
@@ -180,6 +189,7 @@ with tab1:
                             "new_wh_notes": "",
                         },
                     )
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
@@ -222,7 +232,7 @@ with tab1:
                 format_func=lambda x: next(
                     (f"{w.code} — {w.name}" for w in warehouses if w.id == x),
                     str(x)),
-                key="sel_wh_edit",
+                key=f"{PFX}sel_wh_edit",
             )
 
             if sel_wh_id:
@@ -273,6 +283,7 @@ with tab1:
                                 db.commit()
                                 st.success("✅ تم التعديل.")
                                 queue_state_updates(delete_keys=("sel_wh_edit",))
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                         except Exception as e:
                             db.rollback()
@@ -290,6 +301,7 @@ with tab1:
                                 db.commit()
                                 st.success("✅ تم التعطيل.")
                                 queue_state_updates(delete_keys=("sel_wh_edit",))
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()
@@ -303,6 +315,7 @@ with tab1:
                                 db.commit()
                                 st.success("✅ تم التفعيل.")
                                 queue_state_updates(delete_keys=("sel_wh_edit",))
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()
@@ -334,6 +347,7 @@ with tab1:
                                 _delete_warehouse(sel_wh_id)
                                 st.success("✅ تم الحذف.")
                                 queue_state_updates(delete_keys=("sel_wh_edit",))
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ {e}")
@@ -357,7 +371,7 @@ with tab2:
             options=[w.id for w in warehouses],
             format_func=lambda x: next(
                 (w.name for w in warehouses if w.id == x), str(x)),
-            key="stock_wh_sel",
+            key=f"{PFX}stock_wh_sel",
         )
 
         if sel_wh_id:
@@ -411,7 +425,7 @@ with tab3:
                     options=[w.id for w in warehouses],
                     format_func=lambda x: next(
                         (w.name for w in warehouses if w.id == x), str(x)),
-                    key="tr_from",
+                    key=f"{PFX}tr_from",
                 )
             with col2:
                 to_wh_id = st.selectbox(
@@ -419,7 +433,7 @@ with tab3:
                     options=[w.id for w in warehouses],
                     format_func=lambda x: next(
                         (w.name for w in warehouses if w.id == x), str(x)),
-                    key="tr_to",
+                    key=f"{PFX}tr_to",
                 )
 
             items = db.query(models.Item).filter(
@@ -434,7 +448,7 @@ with tab3:
                     "اختر الصنف:",
                     options=list(item_dict.keys()),
                     format_func=lambda x: item_dict[x],
-                    key="tr_item",
+                    key=f"{PFX}tr_item",
                 )
 
                 if sel_item_id and from_wh_id:
@@ -442,9 +456,9 @@ with tab3:
                     st.info(f"💰 الرصيد في المخزن المصدر: **{current_stock}**")
 
                 quantity = st.number_input(
-                    "الكمية:", min_value=1, step=1, key="tr_qty",
+                    "الكمية:", min_value=1, step=1, key=f"{PFX}tr_qty",
                 )
-                tr_notes = st.text_area("ملاحظات (اختياري):", key="tr_notes")
+                tr_notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}tr_notes")
 
                 if st.button("🔄 تنفيذ التحويل", type="primary",
                              use_container_width=True):
@@ -471,6 +485,7 @@ with tab3:
                                 delete_keys=("tr_item", "tr_qty", "tr_notes"),
                                 set_values={"tr_qty": 1, "tr_notes": ""},
                             )
+                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")
@@ -527,22 +542,23 @@ with tab3:
                          f"{t.quantity} {item_map.get(t.item_id, '?')}"
                          for t in transfers if t.id == x),
                         str(x)),
-                    key="del_tr_sel",
+                    key=f"{PFX}del_tr_sel",
                 )
 
-                confirm = st.checkbox("✅ أؤكد الحذف", key="confirm_del_tr")
+                confirm = st.checkbox("✅ أؤكد الحذف", key=f"{PFX}confirm_del_tr")
                 if st.button(
                     "🗑 حذف التحويل",
                     type="secondary",
                     disabled=not confirm,
                     use_container_width=True,
-                    key="del_tr_btn",
+                    key=f"{PFX}del_tr_btn",
                 ):
                     try:
                         _delete_transfer(del_id)
                         st.success("✅ تم الحذف وعكس الأرصدة.")
                         queue_state_updates(delete_keys=("del_tr_sel",
                                                           "confirm_del_tr"))
+                        clear_form(PFX)  # ✅ تفريغ الحقول
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ خطأ: {e}")
@@ -567,7 +583,7 @@ with tab4:
             options=[w.id for w in warehouses],
             format_func=lambda x: next(
                 (w.name for w in warehouses if w.id == x), str(x)),
-            key="inv_wh_sel",
+            key=f"{PFX}inv_wh_sel",
         )
 
         if sel_wh_id:
@@ -619,6 +635,7 @@ with tab4:
                                 queue_state_updates(
                                     delete_keys=(f"count_{stock.id}",)
                                 )
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ {e}")

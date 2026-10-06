@@ -20,6 +20,13 @@ from settings_manager import (
     get_company_info,
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "settings_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -27,6 +34,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="الإعدادات", page_icon="⚙️", layout="wide")
 st.title("⚙️ إعدادات النظام")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 # ✅ تهيئة الإعدادات الافتراضية عند أول زيارة
@@ -74,46 +83,46 @@ with tab_gen:
             company_name = st.text_input(
                 "اسم الشركة *:",
                 value=get_setting("company_name", ""),
-                key="gen_company_name",
+                key=f"{PFX}gen_company_name",
                 disabled=is_readonly,
             )
             company_address = st.text_area(
                 "العنوان:",
                 value=get_setting("company_address", ""),
-                key="gen_company_address",
+                key=f"{PFX}gen_company_address",
                 height=80,
                 disabled=is_readonly,
             )
             company_phone = st.text_input(
                 "الهاتف:",
                 value=get_setting("company_phone", ""),
-                key="gen_company_phone",
+                key=f"{PFX}gen_company_phone",
                 disabled=is_readonly,
             )
         with col_b:
             company_tagline = st.text_input(
                 "الشعار النصي:",
                 value=get_setting("company_tagline", ""),
-                key="gen_company_tagline",
+                key=f"{PFX}gen_company_tagline",
                 help="نص قصير يظهر أسفل اسم الشركة",
                 disabled=is_readonly,
             )
             company_email = st.text_input(
                 "البريد الإلكتروني:",
                 value=get_setting("company_email", ""),
-                key="gen_company_email",
+                key=f"{PFX}gen_company_email",
                 disabled=is_readonly,
             )
             company_website = st.text_input(
                 "الموقع الإلكتروني:",
                 value=get_setting("company_website", ""),
-                key="gen_company_website",
+                key=f"{PFX}gen_company_website",
                 disabled=is_readonly,
             )
             company_tax_id = st.text_input(
                 "الرقم الضريبي:",
                 value=get_setting("company_tax_id", ""),
-                key="gen_company_tax_id",
+                key=f"{PFX}gen_company_tax_id",
                 disabled=is_readonly,
             )
 
@@ -137,6 +146,7 @@ with tab_gen:
                         "company_tax_id": company_tax_id.strip(),
                     }, user_id=current_user_id)
                     st.success("✅ تم حفظ البيانات بنجاح.")
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
@@ -172,7 +182,7 @@ with tab_fin:
                 options=list(currency_opts.keys()) if currency_opts else [1],
                 format_func=lambda x: currency_opts.get(x, "—"),
                 index=list(currency_opts.keys()).index(current_curr_id) if currency_opts and current_curr_id in currency_opts else 0,
-                key="fin_currency",
+                key=f"{PFX}fin_currency",
                 disabled=is_readonly,
             )
 
@@ -181,7 +191,7 @@ with tab_fin:
                 min_value=0.0, max_value=100.0,
                 value=float(get_setting("default_tax_rate", 14.0)),
                 step=0.5, format="%.2f",
-                key="fin_tax",
+                key=f"{PFX}fin_tax",
                 disabled=is_readonly,
             )
 
@@ -191,7 +201,7 @@ with tab_fin:
                 min_value=0.0, max_value=100.0,
                 value=float(get_setting("default_discount_rate", 0.0)),
                 step=0.5, format="%.2f",
-                key="fin_discount",
+                key=f"{PFX}fin_discount",
                 disabled=is_readonly,
             )
 
@@ -203,7 +213,7 @@ with tab_fin:
                     "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
                 ][x - 1],
                 index=int(get_setting("fiscal_year_start_month", 1)) - 1,
-                key="fin_fiscal",
+                key=f"{PFX}fin_fiscal",
                 disabled=is_readonly,
             )
 
@@ -212,7 +222,7 @@ with tab_fin:
                 min_value=0, max_value=4,
                 value=int(get_setting("currency_decimal_places", 2)),
                 step=1,
-                key="fin_decimals",
+                key=f"{PFX}fin_decimals",
                 disabled=is_readonly,
             )
 
@@ -231,6 +241,7 @@ with tab_fin:
                     "currency_decimal_places": str(decimals),
                 }, user_id=current_user_id)
                 st.success("✅ تم حفظ الإعدادات المالية.")
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -249,14 +260,14 @@ with tab_inv:
             inv_prefix = st.text_input(
                 "بادئة رقم الفاتورة:",
                 value=get_setting("invoice_prefix", "INV"),
-                key="inv_prefix",
+                key=f"{PFX}inv_prefix",
                 help="مثال: INV, BILL, SALE...",
                 disabled=is_readonly,
             )
             inv_footer = st.text_area(
                 "نص أسفل الفاتورة:",
                 value=get_setting("invoice_footer_text", ""),
-                key="inv_footer",
+                key=f"{PFX}inv_footer",
                 height=80,
                 disabled=is_readonly,
             )
@@ -264,14 +275,14 @@ with tab_inv:
             inv_terms = st.text_area(
                 "الشروط والأحكام:",
                 value=get_setting("invoice_terms", ""),
-                key="inv_terms",
+                key=f"{PFX}inv_terms",
                 height=140,
                 disabled=is_readonly,
             )
             inv_show_logo = st.checkbox(
                 "إظهار الشعار في الفاتورة",
                 value=get_setting("invoice_show_logo", True),
-                key="inv_show_logo",
+                key=f"{PFX}inv_show_logo",
                 disabled=is_readonly,
             )
 
@@ -289,6 +300,7 @@ with tab_inv:
                     "invoice_show_logo": str(inv_show_logo).lower(),
                 }, user_id=current_user_id)
                 st.success("✅ تم حفظ إعدادات الفواتير.")
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -338,7 +350,7 @@ with tab_brand:
             primary_color = st.color_picker(
                 "اللون الأساسي:",
                 value=get_setting("primary_color", "#2563eb"),
-                key="brand_color",
+                key=f"{PFX}brand_color",
                 disabled=is_readonly,
             )
         with col_b:
@@ -364,6 +376,7 @@ with tab_brand:
             try:
                 set_setting("primary_color", primary_color, user_id=current_user_id)
                 st.success("✅ تم حفظ اللون.")
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -376,7 +389,7 @@ with tab_brand:
     uploaded_logo = st.file_uploader(
         "اختر صورة الشعار:",
         type=['png', 'jpg', 'jpeg'],
-        key="brand_logo_upload",
+        key=f"{PFX}brand_logo_upload",
         disabled=is_readonly,
     )
 
@@ -399,19 +412,21 @@ with tab_brand:
                     type="primary",
                     use_container_width=True,
                     disabled=is_readonly,
-                    key="save_logo_btn",
+                    key=f"{PFX}save_logo_btn",
                 ):
                     set_setting("company_logo_base64", b64, user_id=current_user_id)
                     st.success("✅ تم حفظ الشعار.")
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ في قراءة الصورة: {e}")
 
     if logo_b64 and not is_readonly:
         st.markdown("---")
-        if st.button("🗑 حذف الشعار", type="secondary", key="del_logo_btn"):
+        if st.button("🗑 حذف الشعار", type="secondary", key=f"{PFX}del_logo_btn"):
             set_setting("company_logo_base64", "", user_id=current_user_id)
             st.success("✅ تم حذف الشعار.")
+            clear_form(PFX)  # ✅ تفريغ الحقول
             st.rerun()
 
 
@@ -426,7 +441,7 @@ with tab_notif:
         low_stock = st.checkbox(
             "تفعيل تنبيه المخزون المنخفض",
             value=get_setting("low_stock_alerts", True),
-            key="notif_low_stock",
+            key=f"{PFX}notif_low_stock",
             disabled=is_readonly,
         )
 
@@ -435,14 +450,14 @@ with tab_notif:
             min_value=1, max_value=365,
             value=int(get_setting("overdue_invoice_days", 30)),
             step=1,
-            key="notif_overdue",
+            key=f"{PFX}notif_overdue",
             disabled=is_readonly,
         )
 
         credit_limit = st.checkbox(
             "تفعيل تنبيه تجاوز حد الائتمان",
             value=get_setting("credit_limit_alerts", True),
-            key="notif_credit",
+            key=f"{PFX}notif_credit",
             disabled=is_readonly,
         )
 
@@ -459,6 +474,7 @@ with tab_notif:
                     "credit_limit_alerts": str(credit_limit).lower(),
                 }, user_id=current_user_id)
                 st.success("✅ تم حفظ إعدادات التنبيهات.")
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -488,16 +504,17 @@ with tab_tools:
                     "branding": "🎨 الهوية",
                     "notifications": "🔔 التنبيهات",
                 }.get(x, x),
-                key="reset_category_sel",
+                key=f"{PFX}reset_category_sel",
             )
 
             if st.button(
                 f"🔄 استعادة {cat_to_reset}",
                 use_container_width=True,
-                key="reset_cat_btn",
+                key=f"{PFX}reset_cat_btn",
             ):
                 count = reset_category(cat_to_reset, user_id=current_user_id)
                 st.success(f"✅ تم استعادة {count} إعداد.")
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
 
         with col_b:
@@ -506,7 +523,7 @@ with tab_tools:
 
             confirm_all = st.checkbox(
                 "أؤكد استعادة كل الإعدادات",
-                key="confirm_reset_all",
+                key=f"{PFX}confirm_reset_all",
             )
 
             if st.button(
@@ -514,10 +531,11 @@ with tab_tools:
                 type="secondary",
                 disabled=not confirm_all,
                 use_container_width=True,
-                key="reset_all_btn",
+                key=f"{PFX}reset_all_btn",
             ):
                 count = reset_all_settings(user_id=current_user_id)
                 st.success(f"✅ تم استعادة {count} إعداد.")
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
 
         st.markdown("---")
@@ -527,7 +545,7 @@ with tab_tools:
 
         col_x, col_y = st.columns(2)
         with col_x:
-            if st.button("📤 تصدير الإعدادات JSON", use_container_width=True, key="export_settings"):
+            if st.button("📤 تصدير الإعدادات JSON", use_container_width=True, key=f"{PFX}export_settings"):
                 import json
                 all_s = get_all_settings()
                 export_data = {
@@ -544,23 +562,24 @@ with tab_tools:
                     data=json_str.encode('utf-8'),
                     file_name=f"settings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                     mime="application/json",
-                    key="download_settings_json",
+                    key=f"{PFX}download_settings_json",
                 )
 
         with col_y:
             uploaded_settings = st.file_uploader(
                 "📥 استيراد إعدادات:",
                 type=['json'],
-                key="import_settings_file",
+                key=f"{PFX}import_settings_file",
             )
             if uploaded_settings:
-                if st.button("📥 استيراد", type="primary", key="import_settings_btn"):
+                if st.button("📥 استيراد", type="primary", key=f"{PFX}import_settings_btn"):
                     try:
                         import json
                         data = json.loads(uploaded_settings.read().decode('utf-8'))
                         settings_to_import = data.get("settings", {})
                         count = set_many_settings(settings_to_import, user_id=current_user_id)
                         st.success(f"✅ تم استيراد {count} إعداد.")
+                        clear_form(PFX)  # ✅ تفريغ الحقول
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ خطأ: {e}")

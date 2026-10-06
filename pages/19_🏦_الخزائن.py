@@ -15,6 +15,13 @@ import models
 from models import CashBox, CashBoxType, CashTransfer
 from services import create_cash_box, get_cash_box_balance, transfer_between_cash_boxes
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "box_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -22,6 +29,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="الخزائن", page_icon="🏦", layout="wide")
 st.title("🏦 إدارة الخزائن والحسابات البنكية")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 db = SessionLocal()
@@ -102,30 +111,30 @@ with tab2:
     box_name = st.text_input(
         "اسم الخزينة:",
         placeholder="مثال: الخزينة الرئيسية، بنك الأهلي...",
-        key="new_box_name",
+        key=f"{PFX}new_box_name",
     )
     box_code = st.text_input(
         "كود الخزينة:",
         placeholder="مثال: CB001, BANK01...",
-        key="new_box_code",
+        key=f"{PFX}new_box_code",
     )
 
     box_type = st.selectbox(
         "نوع الخزينة:",
         options=[t.value for t in CashBoxType],
-        key="new_box_type",
+        key=f"{PFX}new_box_type",
     )
 
     responsible_person = st.text_input(
         "الشخص المسؤول (اختياري):",
         placeholder="اسم أمين الصندوق...",
-        key="new_box_responsible",
+        key=f"{PFX}new_box_responsible",
     )
     max_limit = st.number_input(
         "الحد الأقصى للرصيد (اختياري):",
-        min_value=0.0, step=1000.0, key="new_box_max",
+        min_value=0.0, step=1000.0, key=f"{PFX}new_box_max",
     )
-    notes = st.text_area("ملاحظات (اختياري):", key="new_box_notes")
+    notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}new_box_notes")
 
     if st.button("💾 إنشاء الخزينة", type="primary", use_container_width=True):
         if not box_name.strip() or not box_code.strip():
@@ -185,6 +194,7 @@ with tab2:
                         "new_box_notes": "",
                     },
                 )
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 db.rollback()
@@ -211,7 +221,7 @@ with tab3:
                 "من خزينة:",
                 options=list(box_options.keys()),
                 format_func=lambda x: box_options[x],
-                key="from_box",
+                key=f"{PFX}from_box",
             )
             from_balance = get_cash_box_balance(from_box_id)
             st.info(f"💰 الرصيد: {from_balance:,.2f} ج.م")
@@ -221,16 +231,16 @@ with tab3:
                 "إلى خزينة:",
                 options=list(box_options.keys()),
                 format_func=lambda x: box_options[x],
-                key="to_box",
+                key=f"{PFX}to_box",
             )
             to_balance = get_cash_box_balance(to_box_id)
             st.info(f"💰 الرصيد: {to_balance:,.2f} ج.م")
 
         transfer_amount = st.number_input(
             "مبلغ التحويل:", min_value=0.01, step=100.0,
-            format="%.2f", key="transfer_amount",
+            format="%.2f", key=f"{PFX}transfer_amount",
         )
-        transfer_notes = st.text_area("ملاحظات (اختياري):", key="transfer_notes")
+        transfer_notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}transfer_notes")
 
         if st.button("🔄 تنفيذ التحويل", type="primary", use_container_width=True):
             if from_box_id == to_box_id:
@@ -261,6 +271,7 @@ with tab3:
                             "transfer_notes": "",
                         },
                     )
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
@@ -284,7 +295,7 @@ with tab4:
             "اختر خزينة:",
             options=list(box_options.keys()),
             format_func=lambda x: box_options[x],
-            key="select_box_edit",
+            key=f"{PFX}select_box_edit",
         )
 
         if selected_box_id:
@@ -360,6 +371,7 @@ with tab4:
                                 queue_state_updates(
                                     delete_keys=("select_box_edit",)
                                 )
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                         except Exception as e:
                             db.rollback()
@@ -392,6 +404,7 @@ with tab4:
                                 queue_state_updates(
                                     delete_keys=("select_box_edit",)
                                 )
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()
@@ -407,6 +420,7 @@ with tab4:
                                 queue_state_updates(
                                     delete_keys=("select_box_edit",)
                                 )
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()
@@ -454,6 +468,7 @@ with tab4:
                                 queue_state_updates(
                                     delete_keys=("select_box_edit",)
                                 )
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()

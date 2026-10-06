@@ -14,9 +14,18 @@ import models
 from cache_helpers import get_items_with_stock
 
 from auth_required import require_login
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "reports_"
+
 current_user = require_login()
 st.set_page_config(page_title="التقارير", page_icon="📊", layout="wide")
 st.title("📊 التقارير المالية")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 db = SessionLocal()
 

@@ -20,6 +20,13 @@ from services import (
     export_parties_to_excel,
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "pty_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -34,6 +41,8 @@ except Exception:
 
 st.set_page_config(page_title="العملاء والموردين", page_icon="👥", layout="wide")
 st.title("👥 إدارة العملاء والموردين")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 db = SessionLocal()
@@ -101,17 +110,17 @@ with tab1:
         "النوع:",
         ["customer (عميل)", "supplier (مورد)"],
         horizontal=True,
-        key="new_party_type",
+        key=f"{PFX}new_party_type",
     )
     actual_type = "customer" if "customer" in party_type else "supplier"
     type_ar = "عميل" if actual_type == "customer" else "مورد"
 
-    name = st.text_input("الاسم", key="new_party_name")
-    phone = st.text_input("الهاتف", key="new_party_phone")
-    address = st.text_area("العنوان", key="new_party_address")
+    name = st.text_input("الاسم", key=f"{PFX}new_party_name")
+    phone = st.text_input("الهاتف", key=f"{PFX}new_party_phone")
+    address = st.text_area("العنوان", key=f"{PFX}new_party_address")
     opening_balance = st.number_input(
         "الرصيد الافتتاحي", min_value=0.0, step=100.0,
-        format="%.2f", key="new_party_balance",
+        format="%.2f", key=f"{PFX}new_party_balance",
     )
 
     col1, col2, col3 = st.columns(3)
@@ -141,6 +150,7 @@ with tab1:
                             "new_party_balance": 0.0,
                         },
                     )
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
@@ -211,7 +221,7 @@ with tab2:
                 (f"{p.name} — ({'عميل' if p.type == 'customer' else 'مورد'})"
                  for p in parties if p.id == x),
                 str(x)),
-            key="sel_party_edit",
+            key=f"{PFX}sel_party_edit",
         )
 
         if selected_party_id:
@@ -266,6 +276,7 @@ with tab2:
                             db.commit()
                             st.success("✅ تم التعديل!")
                             queue_state_updates(delete_keys=("sel_party_edit",))
+                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                     except Exception as e:
                         db.rollback()
@@ -297,6 +308,7 @@ with tab2:
                             _delete_party(selected_party_id)
                             st.success("✅ تم الحذف.")
                             queue_state_updates(delete_keys=("sel_party_edit",))
+                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")
@@ -313,7 +325,7 @@ with tab3:
         "نوع التصدير:",
         ["customer (عملاء)", "supplier (موردين)"],
         horizontal=True,
-        key="export_party_type",
+        key=f"{PFX}export_party_type",
     )
     actual_export_type = "customer" if "customer" in export_type else "supplier"
 
@@ -333,13 +345,13 @@ with tab3:
     import_type = st.radio(
         "نوع الاستيراد:",
         ["customer (عملاء)", "supplier (موردين)"],
-        key="import_party_type",
+        key=f"{PFX}import_party_type",
     )
     actual_import_type = "customer" if "customer" in import_type else "supplier"
 
     uploaded_file = st.file_uploader(
         "اختر ملف:", type=["xlsx", "csv"],
-        key="upload_party_file",
+        key=f"{PFX}upload_party_file",
     )
 
     if uploaded_file:
@@ -360,6 +372,7 @@ with tab3:
                     for err in errors[:5]:
                         st.write(f"- {err}")
                 queue_state_updates(delete_keys=("upload_party_file",))
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")

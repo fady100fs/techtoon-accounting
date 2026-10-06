@@ -13,6 +13,13 @@ from database import SessionLocal
 import models
 from models import Category
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "cat_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -20,6 +27,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="التصنيفات", page_icon="🗂️", layout="wide")
 st.title("🗂️ إدارة تصنيفات الأصناف")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 db = SessionLocal()
@@ -72,12 +81,12 @@ with tab1:
     category_name = st.text_input(
         "اسم التصنيف:",
         placeholder="مثال: أدوات مكتبية، مواد غذائية...",
-        key="new_cat_name",
+        key=f"{PFX}new_cat_name",
     )
     category_description = st.text_area(
         "الوصف (اختياري):",
         placeholder="وصف مختصر...",
-        key="new_cat_desc",
+        key=f"{PFX}new_cat_desc",
         height=60,
     )
 
@@ -96,7 +105,7 @@ with tab1:
             (k for k, v in category_options.items() if v == x),
             "بدون",
         ),
-        key="new_cat_parent",
+        key=f"{PFX}new_cat_parent",
     )
 
     if st.button("💾 إضافة التصنيف", type="primary", use_container_width=True):
@@ -132,6 +141,7 @@ with tab1:
                             "new_cat_parent": None,
                         },
                     )
+                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
             except Exception as e:
                 db.rollback()
@@ -147,7 +157,7 @@ with tab1:
             format_func=lambda x: next(
                 (c.name for c in all_categories if c.id == x), str(x)
             ),
-            key="sel_cat_edit",
+            key=f"{PFX}sel_cat_edit",
         )
 
         if sel_id:
@@ -183,6 +193,7 @@ with tab1:
                             db.commit()
                             st.success("✅ تم التعديل.")
                             queue_state_updates(delete_keys=("sel_cat_edit",))
+                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                 except Exception as e:
                     db.rollback()
@@ -239,7 +250,7 @@ with tab2:
                     (f"{c.name}" for c in all_categories if c.id == x),
                     str(x),
                 ),
-                key="del_cat_select",
+                key=f"{PFX}del_cat_select",
             )
 
             if del_id:
@@ -274,6 +285,7 @@ with tab2:
                         queue_state_updates(
                             delete_keys=("del_cat_select",)
                         )
+                        clear_form(PFX)  # ✅ تفريغ الحقول
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ خطأ: {e}")

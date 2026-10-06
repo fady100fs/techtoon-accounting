@@ -19,6 +19,13 @@ from services import (
     get_period_for_date
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "close_"
+
 
 # التحقق من تسجيل الدخول
 current_user = require_login()
@@ -27,6 +34,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="الإغلاق المحاسبي", page_icon="📅", layout="wide")
 st.title("📅 الإغلاق المحاسبي")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 st.info(f" المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
@@ -82,6 +91,7 @@ with tab1:
                 
                 st.success(f"✅ تم إنشاء الفترة '{period_name}' بنجاح!")
                 st.balloons()
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -190,6 +200,7 @@ with tab3:
                             st.success(f"✅ تم إغلاق الفترة '{result['period'].period_name}' بنجاح!")
                             st.info(f"صافي الربح/الخسارة: {result['net_profit']:,.2f} ج.م")
                             st.balloons()
+                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")

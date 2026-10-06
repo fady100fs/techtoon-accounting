@@ -15,12 +15,21 @@ from datetime import datetime, timedelta
 from database import SessionLocal
 import models
 from auth_required import require_login
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "adv_rep_"
+
 
 # التحقق من تسجيل الدخول
 current_user = require_login()
 
 st.set_page_config(page_title="تقارير متقدمة", page_icon="📈", layout="wide")
 st.title("📈 التقارير المتقدمة وتحليل الأداء")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 st.info(f"👤 مرحباً **{current_user['full_name']}** | يتم عرض البيانات بناءً على جميع العمليات المسجلة.")
 

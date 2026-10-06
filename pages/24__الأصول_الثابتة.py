@@ -19,6 +19,13 @@ from services import (
     dispose_asset,
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "fa_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -26,6 +33,8 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="الأصول الثابتة", page_icon="🏭", layout="wide")
 st.title("🏭 إدارة الأصول الثابتة")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 db = SessionLocal()
@@ -94,41 +103,41 @@ with tab1:
     with col1:
         asset_name = st.text_input("اسم الأصل:",
                                     placeholder="مثال: سيارة نقل...",
-                                    key="new_asset_name")
+                                    key=f"{PFX}new_asset_name")
         asset_code = st.text_input("كود الأصل:",
                                     placeholder="مثال: FA001...",
-                                    key="new_asset_code")
+                                    key=f"{PFX}new_asset_code")
         asset_category = st.selectbox(
             "التصنيف:",
             ["مباني", "سيارات", "أجهزة ومعدات", "أثاث", "أراضي", "أخرى"],
-            key="new_asset_category",
+            key=f"{PFX}new_asset_category",
         )
         purchase_date = st.date_input("تاريخ الشراء:",
                                        value=datetime.now().date(),
-                                       key="new_asset_purchase_date")
+                                       key=f"{PFX}new_asset_purchase_date")
     with col2:
         purchase_cost = st.number_input(
             "تكلفة الشراء:", min_value=0.01, step=1000.0,
-            format="%.2f", key="new_asset_cost",
+            format="%.2f", key=f"{PFX}new_asset_cost",
         )
         salvage_value = st.number_input(
             "قيمة الخردة:", min_value=0.0, step=100.0,
-            format="%.2f", key="new_asset_salvage",
+            format="%.2f", key=f"{PFX}new_asset_salvage",
         )
         useful_life = st.number_input(
             "العمر الإنتاجي (سنوات):", min_value=1, max_value=50,
-            value=10, step=1, key="new_asset_life",
+            value=10, step=1, key=f"{PFX}new_asset_life",
         )
         depreciation_method = st.selectbox(
             "طريقة الإهلاك:",
             options=[m.value for m in DepreciationMethod],
-            key="new_asset_dep_method",
+            key=f"{PFX}new_asset_dep_method",
         )
 
-    location = st.text_input("الموقع (اختياري):", key="new_asset_location")
+    location = st.text_input("الموقع (اختياري):", key=f"{PFX}new_asset_location")
     responsible_person = st.text_input("المسؤول (اختياري):",
-                                        key="new_asset_responsible")
-    notes = st.text_area("ملاحظات (اختياري):", key="new_asset_notes")
+                                        key=f"{PFX}new_asset_responsible")
+    notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}new_asset_notes")
 
     if st.button("💾 إضافة الأصل", type="primary", use_container_width=True):
         if not asset_name.strip() or not asset_code.strip():
@@ -175,6 +184,7 @@ with tab1:
                         "new_asset_responsible": "", "new_asset_notes": "",
                     },
                 )
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -246,7 +256,7 @@ with tab2:
                 format_func=lambda x: next(
                     (f"{a.code} — {a.name}" for a in assets if a.id == x),
                     str(x)),
-                key="sel_asset_edit",
+                key=f"{PFX}sel_asset_edit",
             )
 
             if sel_id:
@@ -320,6 +330,7 @@ with tab2:
                                 db.commit()
                                 st.success("✅ تم التعديل.")
                                 queue_state_updates(delete_keys=("sel_asset_edit",))
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                         except Exception as e:
                             db.rollback()
@@ -349,6 +360,7 @@ with tab2:
                                 _delete_asset(sel_id)
                                 st.success("✅ تم الحذف.")
                                 queue_state_updates(delete_keys=("sel_asset_edit",))
+                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ {e}")
@@ -369,7 +381,7 @@ with tab3:
     else:
         year = st.number_input(
             "السنة المالية:", min_value=2020, max_value=2100,
-            value=datetime.now().year, step=1, key="dep_year",
+            value=datetime.now().year, step=1, key=f"{PFX}dep_year",
         )
 
         if st.button("🧮 حساب الإهلاك المتوقع", type="primary"):
@@ -396,7 +408,7 @@ with tab3:
             format_func=lambda x: next(
                 (f"{a.code} - {a.name}" for a in active_assets if a.id == x),
                 str(x)),
-            key="dep_asset_sel",
+            key=f"{PFX}dep_asset_sel",
         )
 
         if sel_asset_id and st.button("💾 تسجيل الإهلاك",
@@ -411,6 +423,7 @@ with tab3:
                 st.success(f"✅ تم تسجيل إهلاك {year}.")
                 st.info(f"مبلغ الإهلاك: {rec.depreciation_amount:,.2f} ج.م")
                 queue_state_updates(delete_keys=("dep_asset_sel",))
+                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ {e}")
@@ -433,7 +446,7 @@ with tab4:
             format_func=lambda x: next(
                 (f"{a.code} - {a.name}" for a in all_assets if a.id == x),
                 str(x)),
-            key="schedule_asset_sel",
+            key=f"{PFX}schedule_asset_sel",
         )
 
         if sel_id:
@@ -485,7 +498,7 @@ with tab5:
                 (f"{a.code} - {a.name} (صافي: {a.net_book_value:,.2f})"
                  for a in active_assets if a.id == x),
                 str(x)),
-            key="dispose_asset_sel",
+            key=f"{PFX}dispose_asset_sel",
         )
 
         if sel_id:
@@ -504,12 +517,12 @@ with tab5:
 
             disposal_date = st.date_input("تاريخ التخلص:",
                                            value=datetime.now().date(),
-                                           key="dispose_date")
+                                           key=f"{PFX}dispose_date")
             disposal_value = st.number_input(
                 "قيمة البيع:", min_value=0.0, step=100.0,
-                format="%.2f", key="dispose_value",
+                format="%.2f", key=f"{PFX}dispose_value",
             )
-            disposal_notes = st.text_area("ملاحظات:", key="dispose_notes")
+            disposal_notes = st.text_area("ملاحظات:", key=f"{PFX}dispose_notes")
 
             if disposal_value > 0:
                 gl = disposal_value - sel_asset.net_book_value
@@ -523,7 +536,7 @@ with tab5:
                          use_container_width=True):
                 confirm = st.checkbox(
                     "✅ أؤكد التخلص النهائي",
-                    key="confirm_dispose",
+                    key=f"{PFX}confirm_dispose",
                 )
                 if confirm:
                     try:
@@ -543,6 +556,7 @@ with tab5:
                             set_values={"dispose_value": 0.0,
                                         "dispose_notes": ""},
                         )
+                        clear_form(PFX)  # ✅ تفريغ الحقول
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ {e}")

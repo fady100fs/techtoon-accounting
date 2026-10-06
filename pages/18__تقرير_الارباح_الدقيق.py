@@ -14,12 +14,21 @@ from database import SessionLocal
 import models
 from models import CostHistory
 from auth_required import require_login
+from form_manager import clear_form, show_clear_hint
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "profit_"
+
 
 # التحقق من تسجيل الدخول
 current_user = require_login()
 
 st.set_page_config(page_title="تقرير الأرباح الدقيق", page_icon="💰", layout="wide")
 st.title("💰 تقرير الأرباح والخسائر الدقيق")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 st.info(f" مرحباً **{current_user['full_name']}** | التقرير يعتمد على فواتير الشراء والبيع الفعلية")
 

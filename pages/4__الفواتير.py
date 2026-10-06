@@ -27,7 +27,14 @@ import models
 from services import create_invoice, create_payment
 from period_guard import check_period_open
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
 from code_search import CodeSearch, FormState
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "inv_"
+
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -463,6 +470,7 @@ def render_payment_section(db, invoice):
                             _update_invoice_status(db, inv_fresh)
                         st.success(f"✅ تم تسجيل دفعة {amount:,.2f} ج.م بنجاح!")
                         st.balloons()
+                        clear_form(PFX)  # ✅ تفريغ الحقول
                         st.rerun()
                 except Exception as e:
                     db.rollback()
@@ -492,6 +500,7 @@ def render_payment_section(db, invoice):
                         if inv_fresh:
                             _update_invoice_status(db, inv_fresh)
                         st.success("✅ تم حذف الدفعة.")
+                        clear_form(PFX)  # ✅ تفريغ الحقول
                         st.rerun()
                     else:
                         st.error("❌ فشل حذف الدفعة.")
@@ -613,6 +622,8 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
 fs = FormState("inv", cart_keys=("invoice_items",))
 
 st.title("🧾 إنشاء الفواتير")
+
+show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}**")
 
 flash = st.session_state.pop("_inv_flash", None)
@@ -650,12 +661,13 @@ if is_editing:
     with col_banner:
         st.info(f"🔴 **وضع التعديل** — أنت تعدّل الفاتورة **{editing_no}**.")
     with col_cancel:
-        if st.button("❌ إلغاء التعديل", use_container_width=True, key="cancel_edit_btn"):
+        if st.button("❌ إلغاء التعديل", use_container_width=True, key=f"{PFX}cancel_edit_btn"):
             _clear_edit_state()
             queue_state_updates(
                 delete_keys=("inv_items_editor",),
                 set_values={no_key: next_no, "invoice_items": []},
             )
+            clear_form(PFX)  # ✅ تفريغ الحقول
             st.rerun()
 
 if kb['new']:
@@ -782,7 +794,7 @@ if st.session_state.invoice_items:
         df_edit,
         num_rows="dynamic",
         use_container_width=True,
-        key="inv_items_editor",
+        key=f"{PFX}inv_items_editor",
         column_config={
             "الصنف": st.column_config.TextColumn("الصنف", required=True, width="large"),
             "الكمية": st.column_config.NumberColumn("الكمية", min_value=0.0, step=1.0, format="%.2f"),
