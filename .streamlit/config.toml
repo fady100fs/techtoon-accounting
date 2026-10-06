@@ -1,19 +1,11 @@
-﻿[server]
-fileWatcherType = "none"
-runOnSave = false
-enableStaticServing = true
-maxUploadSize = 50
-enableXsrfProtection = true
-enableCORS = false
+﻿[theme]
+primaryColor = "#2563eb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#0f172a"
 
-[client]
-showErrorDetails = false
-toolbarMode = "minimal"
-showSidebarNavigation = false
+[server]
+maxUploadSize = 200
 
 [browser]
 gatherUsageStats = false
-
-[runner]
-fastReruns = true
-magicEnabled = true
