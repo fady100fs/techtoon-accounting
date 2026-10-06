@@ -20,6 +20,7 @@ from services import (
     export_parties_to_excel,
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -34,7 +35,15 @@ except Exception:
 
 st.set_page_config(page_title="العملاء والموردين", page_icon="👥", layout="wide")
 st.title("👥 إدارة العملاء والموردين")
+show_clear_hint()   # ✅ تلميح
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
+
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لمفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "pty_"
+
 
 db = SessionLocal()
 
@@ -60,13 +69,11 @@ def _delete_party(party_id):
                 "الحل: اتركه بدون حذف."
             )
 
-        # حذف القيود المرتبطة بحسابه (لو لسه فيه قيود يدوية)
         if p.account_id:
             db_local.query(models.JournalLine).filter(
                 models.JournalLine.account_id == p.account_id
             ).delete(synchronize_session=False)
 
-        # حذف الحساب
         if p.account_id:
             acc = db_local.query(models.Account).filter(
                 models.Account.id == p.account_id
@@ -95,28 +102,28 @@ tab1, tab2, tab3 = st.tabs([
 # ==========================================
 with tab1:
     st.subheader("➕ إضافة عميل أو مورد")
-    st.caption("💡 بعد الحفظ، الحقول هتتفرّغ تلقائيًا.")
 
     party_type = st.radio(
         "النوع:",
         ["customer (عميل)", "supplier (مورد)"],
         horizontal=True,
-        key="new_party_type",
+        key=f"{PFX}type",
     )
     actual_type = "customer" if "customer" in party_type else "supplier"
     type_ar = "عميل" if actual_type == "customer" else "مورد"
 
-    name = st.text_input("الاسم", key="new_party_name")
-    phone = st.text_input("الهاتف", key="new_party_phone")
-    address = st.text_area("العنوان", key="new_party_address")
+    name = st.text_input("الاسم", key=f"{PFX}name")
+    phone = st.text_input("الهاتف", key=f"{PFX}phone")
+    address = st.text_area("العنوان", key=f"{PFX}address")
     opening_balance = st.number_input(
         "الرصيد الافتتاحي", min_value=0.0, step=100.0,
-        format="%.2f", key="new_party_balance",
+        format="%.2f", key=f"{PFX}balance",
     )
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("💾 حفظ", type="primary", use_container_width=True):
+        if st.button("💾 حفظ", type="primary", use_container_width=True,
+                     key=f"{PFX}save"):
             if not name.strip():
                 st.error("❌ يرجى إدخال الاسم.")
             else:
@@ -129,52 +136,20 @@ with tab1:
                     st.success(f"✅ تم إضافة {type_ar} '{name}'!")
                     st.balloons()
 
-                    queue_state_updates(
-                        delete_keys=(
-                            "new_party_name", "new_party_phone",
-                            "new_party_address", "new_party_balance",
-                        ),
-                        set_values={
-                            "new_party_name": "",
-                            "new_party_phone": "",
-                            "new_party_address": "",
-                            "new_party_balance": 0.0,
-                        },
-                    )
+                    # ✅ تفريغ كل الحقول
+                    clear_form(PFX)
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
 
     with col2:
-        if st.button("🧹 مسح", use_container_width=True):
-            queue_state_updates(
-                delete_keys=(
-                    "new_party_name", "new_party_phone",
-                    "new_party_address", "new_party_balance",
-                ),
-                set_values={
-                    "new_party_name": "",
-                    "new_party_phone": "",
-                    "new_party_address": "",
-                    "new_party_balance": 0.0,
-                },
-            )
+        if st.button("🧹 مسح", use_container_width=True, key=f"{PFX}clear_btn"):
+            clear_form(PFX)
             st.rerun()
 
     with col3:
-        if st.button("❌ إلغاء", use_container_width=True):
-            queue_state_updates(
-                delete_keys=(
-                    "new_party_name", "new_party_phone",
-                    "new_party_address", "new_party_balance",
-                ),
-                set_values={
-                    "new_party_name": "",
-                    "new_party_phone": "",
-                    "new_party_address": "",
-                    "new_party_balance": 0.0,
-                },
-            )
+        if st.button("❌ إلغاء", use_container_width=True, key=f"{PFX}cancel_btn"):
+            clear_form(PFX)
             st.rerun()
 
 
@@ -211,7 +186,7 @@ with tab2:
                 (f"{p.name} — ({'عميل' if p.type == 'customer' else 'مورد'})"
                  for p in parties if p.id == x),
                 str(x)),
-            key="sel_party_edit",
+            key=f"{PFX}edit_select",   # ✅
         )
 
         if selected_party_id:
@@ -239,12 +214,15 @@ with tab2:
             # ===== التعديل =====
             with col_edit:
                 st.markdown("#### ✏️ تعديل البيانات")
-                with st.form(f"edit_party_form_{selected_party_id}"):
-                    new_name = st.text_input("الاسم:", value=sel_party.name)
-                    new_phone = st.text_input("الهاتف:", value=sel_party.phone or "")
+                with st.form(f"{PFX}edit_form_{selected_party_id}"):
+                    new_name = st.text_input("الاسم:", value=sel_party.name,
+                                             key=f"{PFX}edit_name_{selected_party_id}")
+                    new_phone = st.text_input("الهاتف:", value=sel_party.phone or "",
+                                              key=f"{PFX}edit_phone_{selected_party_id}")
                     new_address = st.text_area("العنوان:",
                                                 value=sel_party.address or "",
-                                                height=80)
+                                                height=80,
+                                                key=f"{PFX}edit_address_{selected_party_id}")
                     submitted = st.form_submit_button("💾 حفظ التعديلات",
                                                        type="primary")
 
@@ -256,7 +234,7 @@ with tab2:
                             sel_party.name = new_name.strip()
                             sel_party.phone = new_phone.strip() or None
                             sel_party.address = new_address.strip() or None
-                            # تحديث الحساب المرتبط كمان
+
                             if sel_party.account_id:
                                 acc = db.query(models.Account).filter(
                                     models.Account.id == sel_party.account_id
@@ -265,7 +243,9 @@ with tab2:
                                     acc.name = new_name.strip()
                             db.commit()
                             st.success("✅ تم التعديل!")
-                            queue_state_updates(delete_keys=("sel_party_edit",))
+
+                            # ✅ تفريغ كل مفاتيح التعديل
+                            clear_form(PFX)
                             st.rerun()
                     except Exception as e:
                         db.rollback()
@@ -284,19 +264,21 @@ with tab2:
                     st.warning(f"⚠️ سيتم حذف **{sel_party.name}** نهائيًا.")
                     confirm = st.checkbox(
                         "✅ أؤكد الحذف النهائي",
-                        key=f"confirm_del_party_{selected_party_id}",
+                        key=f"{PFX}confirm_del_{selected_party_id}",
                     )
                     if st.button(
                         "🗑 حذف",
                         type="secondary",
                         disabled=not confirm,
                         use_container_width=True,
-                        key=f"del_party_btn_{selected_party_id}",
+                        key=f"{PFX}del_btn_{selected_party_id}",
                     ):
                         try:
                             _delete_party(selected_party_id)
                             st.success("✅ تم الحذف.")
-                            queue_state_updates(delete_keys=("sel_party_edit",))
+
+                            # ✅ تفريغ كل مفاتيح الصفحة
+                            clear_form(PFX)
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")
@@ -313,11 +295,12 @@ with tab3:
         "نوع التصدير:",
         ["customer (عملاء)", "supplier (موردين)"],
         horizontal=True,
-        key="export_party_type",
+        key=f"{PFX}export_type",
     )
     actual_export_type = "customer" if "customer" in export_type else "supplier"
 
-    if st.button("📤 تصدير إلى Excel", type="primary"):
+    if st.button("📤 تصدير إلى Excel", type="primary",
+                 key=f"{PFX}export_btn"):
         try:
             output_path, count = export_parties_to_excel(actual_export_type)
             st.success(f"✅ تم تصدير {count} سجل!")
@@ -333,13 +316,13 @@ with tab3:
     import_type = st.radio(
         "نوع الاستيراد:",
         ["customer (عملاء)", "supplier (موردين)"],
-        key="import_party_type",
+        key=f"{PFX}import_type",
     )
     actual_import_type = "customer" if "customer" in import_type else "supplier"
 
     uploaded_file = st.file_uploader(
         "اختر ملف:", type=["xlsx", "csv"],
-        key="upload_party_file",
+        key=f"{PFX}upload_file",
     )
 
     if uploaded_file:
@@ -350,7 +333,7 @@ with tab3:
             tmp_file.write(uploaded_file.getvalue())
             tmp_path = tmp_file.name
 
-        if st.button("📥 استيراد", type="primary"):
+        if st.button("📥 استيراد", type="primary", key=f"{PFX}import_btn"):
             try:
                 count, errors = import_parties_from_file(
                     tmp_path, actual_import_type, created_by=current_user_id
@@ -359,7 +342,9 @@ with tab3:
                 if errors:
                     for err in errors[:5]:
                         st.write(f"- {err}")
-                queue_state_updates(delete_keys=("upload_party_file",))
+
+                # ✅ تفريغ حقل الرفع
+                clear_form(PFX)
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
