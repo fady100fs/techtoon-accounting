@@ -12,12 +12,10 @@ from datetime import datetime
 from database import SessionLocal
 import models
 from services import create_payment, movement_serial
+from period_guard import check_period_open
 from auth_required import require_login, get_current_user_id, get_current_user_name
-
-# ✅ Cache Layer
 from cache_helpers import (
     get_payments_index,
-    get_parties,
     invalidate_all,
 )
 
@@ -48,6 +46,10 @@ def _delete_payment_full(payment_id):
         ).first()
         if not pay:
             raise ValueError("الدفعة غير موجودة")
+
+        # ✅ فحص الفترة
+        if pay.date:
+            check_period_open(pay.date, entity="حذف دفعة")
 
         ref_marker = pay.reference_number or str(pay.id)
         je = db_local.query(models.JournalEntry).filter(
@@ -164,7 +166,7 @@ with tab1:
                     currency_id=selected_currency_id,
                     payment_date=payment_datetime,
                 )
-                invalidate_all()   # ✅
+                invalidate_all()
                 st.success(f"✅ تم تسجيل دفعة {type_ar} بمبلغ {amount:,.2f}!")
                 st.balloons()
 
@@ -191,7 +193,6 @@ with tab1:
 with tab2:
     st.subheader("📋 سجل المدفوعات")
 
-    # ✅ استدعاء واحد مخزّن بدل N+1
     payments_data = get_payments_index(limit=1000)
 
     if payments_data:
@@ -251,7 +252,6 @@ with tab2:
 with tab3:
     st.subheader("⚙️ تعديل / حذف دفعة")
 
-    # ✅ استخدام cache للقوائم
     payments_data = get_payments_index(limit=1000)
 
     if not payments_data:
@@ -273,7 +273,6 @@ with tab3:
         )
 
         if selected_payment_id:
-            # جلب الكائن الفعلي من db (ليس من cache — لأننا سنعدّل)
             sel_pay = db.query(models.Payment).filter(
                 models.Payment.id == selected_payment_id
             ).first()
@@ -337,6 +336,10 @@ with tab3:
 
                 if submitted:
                     try:
+                        # ✅ فحص الفترة
+                        if sel_pay.date:
+                            check_period_open(sel_pay.date, entity="تعديل دفعة")
+
                         ref_marker = sel_pay.reference_number or str(sel_pay.id)
                         old_je = db.query(models.JournalEntry).filter(
                             models.JournalEntry.reference_type == "payment",
@@ -388,7 +391,7 @@ with tab3:
                             ))
 
                         db.commit()
-                        invalidate_all()   # ✅
+                        invalidate_all()
                         st.success("✅ تم التعديل بنجاح!")
                         queue_state_updates(delete_keys=("sel_payment_edit",))
                         st.rerun()
@@ -413,7 +416,7 @@ with tab3:
                 ):
                     try:
                         _delete_payment_full(selected_payment_id)
-                        invalidate_all()   # ✅
+                        invalidate_all()
                         st.success("✅ تم الحذف.")
                         queue_state_updates(delete_keys=("sel_payment_edit",))
                         st.rerun()

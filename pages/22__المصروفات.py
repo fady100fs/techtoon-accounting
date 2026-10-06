@@ -18,8 +18,9 @@ from models import Account, AccountType, CashBox
 from services import (
     create_expense, delete_expense, get_expenses_summary,
     get_expense_categories, create_expense_category,
-    movement_serial,   # ✅ جديد
+    movement_serial,
 )
+from period_guard import check_period_open
 from auth_required import require_login, get_current_user_id, get_current_user_name
 
 current_user = require_login()
@@ -150,6 +151,10 @@ def _movement_details(entry):
 def _delete_movement(entry):
     db_local = SessionLocal()
     try:
+        # ✅ فحص الفترة
+        if entry.date:
+            check_period_open(entry.date, entity="حذف حركة خزينة")
+
         db_local.query(models.JournalLine).filter(
             models.JournalLine.entry_id == entry.id
         ).delete(synchronize_session=False)
@@ -164,10 +169,7 @@ def _delete_movement(entry):
 
 def _update_movement(entry_id, new_amount, new_date, new_desc,
                      new_ref=None, new_notes=None):
-    """يحدّث حركة خزينة موجودة: المبلغ + التاريخ + الوصف + الأسطر المحاسبية.
-
-    لا يغيّر الاتجاه أو الحساب المقابل — لتغييرها احذف وأعد الإنشاء.
-    """
+    """يحدّث حركة خزينة: المبلغ + التاريخ + الوصف + الأسطر."""
     db_local = SessionLocal()
     try:
         entry = db_local.query(models.JournalEntry).filter(
@@ -176,7 +178,11 @@ def _update_movement(entry_id, new_amount, new_date, new_desc,
         if not entry:
             raise ValueError("الحركة غير موجودة")
 
-        # قراءة تفاصيل الأسطر
+        # ✅ فحص الفترة الحالية والجديدة
+        if entry.date:
+            check_period_open(entry.date, entity="تعديل حركة خزينة")
+        check_period_open(new_date, entity="تعديل حركة خزينة")
+
         lines = db_local.query(models.JournalLine).filter(
             models.JournalLine.entry_id == entry.id
         ).all()
@@ -198,13 +204,11 @@ def _update_movement(entry_id, new_amount, new_date, new_desc,
         direction = _movement_direction(entry)
         dir_label = "وارد" if direction == "in" else "صادر"
 
-        # قراءة الحساب المقابل لبناء الوصف من جديد
         counter_acc = db_local.query(Account).filter(
             Account.id == counter_line.account_id
         ).first()
         counter_label = f"{counter_acc.code} {counter_acc.name}" if counter_acc else ""
 
-        # تحديث الـ entry
         entry.date = new_date
         new_desc_full = f"{dir_label}: {new_desc.strip()}"
         if counter_label:
@@ -213,7 +217,6 @@ def _update_movement(entry_id, new_amount, new_date, new_desc,
             new_desc_full += f" [{new_notes.strip()}]"
         entry.description = new_desc_full[:250]
 
-        # تحديث الأسطر
         if direction == "in":
             cash_line.debit = float(new_amount)
             cash_line.credit = 0.0
@@ -271,10 +274,7 @@ def _get_counter_account_groups():
 
 
 def _extract_original_desc(description):
-    """يستخرج الوصف الأصلي من نص القيد.
-
-    مثال: "وارد: نصيب الأخ — 4101 إيرادات"  ->  "نصيب الأخ"
-    """
+    """يستخرج الوصف الأصلي من نص القيد."""
     if not description:
         return ""
     parts = description.split(" — ", 1)
@@ -381,6 +381,9 @@ with tab1:
         else:
             try:
                 cm_dt = datetime.combine(cm_date, cm_time)
+
+                # ✅ فحص الفترة قبل الحفظ
+                check_period_open(cm_dt, entity="تسجيل حركة خزينة")
 
                 if direction == "in":
                     _create_cash_movement(
