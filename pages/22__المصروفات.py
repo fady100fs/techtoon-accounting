@@ -30,7 +30,7 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="حركات الخزينة", page_icon="💹", layout="wide")
 st.title("💹 حركات الخزينة")
-show_clear_hint()   # ✅ تلميح
+show_clear_hint()
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 
@@ -40,7 +40,76 @@ st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{curren
 PFX = "cm_"
 
 
+# ═══════════════════════════════════════════════════════════
+# ✅ ألوان مجموعات الحسابات (للشبكة)
+# ═══════════════════════════════════════════════════════════
+GROUP_COLORS = {
+    "💰 الإيرادات": "#10b981",           # أخضر
+    "👥 تحصيل من عملاء": "#3b82f6",       # أزرق
+    "💵 قروض وسلف": "#8b5cf6",            # بنفسجي
+    "🏦 حقوق ملكية": "#06b6d4",           # سماوي
+    "💸 مصروفات": "#ef4444",              # أحمر
+    "📦 الأصول": "#64748b",               # رمادي
+    "🤝 الموردون": "#f59e0b",             # برتقالي
+}
+
+
 db = SessionLocal()
+
+
+# ==========================================
+# CSS للشبكة الملونة
+# ==========================================
+def _inject_grid_css(groups):
+    """يولّد CSS ديناميكي لكل مجموعة (بلون مختلف)."""
+    css = ["<style>"]
+
+    for gi, (group_name, _) in enumerate(groups.items()):
+        color = GROUP_COLORS.get(group_name, "#2563eb")
+        container_sel = f'.st-key-{PFX}acc_grp_{gi}'
+
+        css.append(f"""
+        {container_sel} button {{
+            background: {color} !important;
+            color: #ffffff !important;
+            border: 2px solid {color} !important;
+            border-radius: 12px !important;
+            padding: 10px 8px !important;
+            min-height: 82px !important;
+            width: 100% !important;
+            font-weight: 700 !important;
+            font-size: 13px !important;
+            line-height: 1.35 !important;
+            white-space: normal !important;
+            word-break: break-word !important;
+            transition: all 0.15s ease !important;
+        }}
+        {container_sel} button:hover {{
+            filter: brightness(1.15) !important;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 14px rgba(0,0,0,0.25) !important;
+            border-color: #ffffff !important;
+        }}
+        {container_sel} button:focus {{
+            outline: none !important;
+        }}
+        {container_sel} button p {{
+            color: #ffffff !important;
+            font-size: 13px !important;
+            font-weight: 700 !important;
+        }}
+        /* المربع المختار: إطار أبيض + ظل */
+        {container_sel} button[kind="primary"],
+        {container_sel} button[data-testid="stBaseButton-primary"] {{
+            background: {color} !important;
+            border: 3px solid #ffffff !important;
+            box-shadow: 0 0 0 3px {color}, 0 0 24px rgba(255,255,255,0.45) !important;
+            transform: scale(1.02);
+        }}
+        """)
+
+    css.append("</style>")
+    return "".join(css)
 
 
 # ==========================================
@@ -330,32 +399,64 @@ with tab1:
     )
 
     st.markdown("### 3️⃣ الحساب المقابل (سبب الحركة)")
+    st.caption("💡 اضغط على مربع الحساب لاختياره.")
+
     counter_groups = _get_counter_account_groups()
 
     if not counter_groups:
         st.error("⚠️ لا توجد حسابات طرف مقابل!")
         st.stop()
 
-    for group_name, accounts in counter_groups.items():
-        with st.expander(f"{group_name} ({len(accounts)})", expanded=False):
-            acc_opts = {a.id: f"{a.code} — {a.name}" for a in accounts}
-            picked = st.radio(
-                f"اختر من {group_name}:",
-                options=list(acc_opts.keys()),
-                format_func=lambda x: acc_opts[x],
-                key=f"{PFX}acc_{group_name}",
-                label_visibility="collapsed",
-            )
-            if st.button(f"✔️ اختيار من {group_name}", key=f"{PFX}pick_{group_name}"):
-                st.session_state[f"{PFX}selected_account"] = picked
+    # ✅ CSS ديناميكي لكل مجموعة
+    st.markdown(_inject_grid_css(counter_groups), unsafe_allow_html=True)
 
+    # ✅ الشبكة
+    COLS_PER_ROW = 3
+    selected_account_id = st.session_state.get(f"{PFX}selected_account")
+
+    for gi, (group_name, accounts) in enumerate(counter_groups.items()):
+        group_color = GROUP_COLORS.get(group_name, "#2563eb")
+
+        # عنوان المجموعة
+        st.markdown(
+            f'<div style="'
+            f'color:{group_color}; font-weight:800; font-size:1.05rem; '
+            f'margin: 14px 0 6px 0; '
+            f'border-right: 4px solid {group_color}; padding-right: 10px;'
+            f'">{group_name} ({len(accounts)})</div>',
+            unsafe_allow_html=True,
+        )
+
+        # صفوف المربعات
+        with st.container(key=f"{PFX}acc_grp_{gi}"):
+            for i in range(0, len(accounts), COLS_PER_ROW):
+                cols = st.columns(COLS_PER_ROW)
+                for j, acc in enumerate(accounts[i:i + COLS_PER_ROW]):
+                    with cols[j]:
+                        is_selected = (selected_account_id == acc.id)
+                        label = (
+                            f"{'✅ ' if is_selected else ''}"
+                            f"{acc.code}\n{acc.name}"
+                        )
+                        btn_type = "primary" if is_selected else "secondary"
+                        if st.button(
+                            label,
+                            key=f"{PFX}acc_btn_{acc.id}",
+                            type=btn_type,
+                            use_container_width=True,
+                        ):
+                            st.session_state[f"{PFX}selected_account"] = acc.id
+                            st.rerun()
+
+    # عرض الحساب المختار
     selected_account_id = st.session_state.get(f"{PFX}selected_account")
     if selected_account_id:
         acc = db.query(Account).filter(Account.id == selected_account_id).first()
         if acc:
-            st.success(f"✅ الحساب المختار: **{acc.code} — {acc.name}**")
+            st.markdown("---")
+            st.success(f"✅ **الحساب المختار:** `{acc.code}` — {acc.name}")
     else:
-        st.warning("👆 اختر حساب من القوائم أعلاه.")
+        st.warning("👆 اضغط على مربع حساب لاختياره.")
 
     st.markdown("### 4️⃣ تفاصيل الحركة")
 
@@ -439,7 +540,6 @@ with tab1:
                 st.success(f"✅ تم تسجيل حركة {direction_label} بمبلغ {amount:,.2f} ج.م")
                 st.balloons()
 
-                # ✅ تفريغ كل حقول النموذج
                 clear_form(PFX)
                 st.rerun()
             except Exception as e:
@@ -669,7 +769,6 @@ with tab3:
                             )
                             st.success(f"✅ تم تحديث الحركة `{serial}` بنجاح!")
 
-                            # ✅ تفريغ كل مفاتيح التعديل
                             clear_form(PFX)
                             st.rerun()
                         except Exception as e:
@@ -696,7 +795,6 @@ with tab3:
                             _delete_movement(entry)
                             st.success(f"✅ تم حذف الحركة `{serial}`.")
 
-                            # ✅ تفريغ كل مفاتيح الصفحة
                             clear_form(PFX)
                             st.rerun()
                         except Exception as e:
