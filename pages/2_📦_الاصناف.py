@@ -25,6 +25,7 @@ from services import (
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
 from code_search import CodeSearch, FormState
+from form_manager import clear_form, show_clear_hint
 
 # ✅ Cache Layer
 from cache_helpers import (
@@ -43,6 +44,12 @@ try:
     add_enter_hint()
 except Exception:
     pass
+
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لمفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "itm_"
 
 
 # ==========================================
@@ -119,6 +126,7 @@ def add_kit_components(db, kit_id, components):
 # الصفحة
 # ==========================================
 st.title("📦 إدارة الأصناف")
+show_clear_hint()   # ✅ تلميح
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 msg = st.session_state.pop("_items_flash", None)
@@ -144,13 +152,11 @@ st.markdown("---")
 # ==========================================
 if section == SECTIONS[0]:
     st.subheader("➕ إضافة صنف جديد")
-    st.caption("💡 بعد الحفظ، الحقول هتتفرّغ تلقائيًا.")
 
     item_type = st.radio("نوع الصنف:", [NORMAL_LABEL, KIT_LABEL], key=fs.key("type"))
 
     name = st.text_input("اسم الصنف", key=fs.key("name"))
 
-    # ✅ استخدام cache للتصنيفات
     from cache_helpers import get_active_categories
     all_categories_data = get_active_categories()
     category_options = {"بدون تصنيف": None}
@@ -218,7 +224,7 @@ if section == SECTIONS[0]:
 
                 if saved:
                     flash("✅ تم الحفظ بنجاح!")
-                    invalidate_all()   # ✅
+                    invalidate_all()
                     queue_state_updates(
                         delete_prefixes=("itemadd_", "qty_"),
                     )
@@ -253,16 +259,13 @@ if section == SECTIONS[0]:
 if section == SECTIONS[1]:
     st.subheader("📋 قائمة الأصناف")
 
-    # ✅ استخدام cache للتصنيفات
     from cache_helpers import get_active_categories
     all_categories_data = get_active_categories()
     category_filter_options = ["الكل"] + [name for _, name in all_categories_data]
     filter_category = st.selectbox("تصفية حسب التصنيف:", options=category_filter_options)
 
-    # ✅ استخدام cache (استعلامان فقط بدل N+2)
     all_items_cached = get_items_with_stock()
 
-    # تصفية في الذاكرة
     if filter_category == "الكل":
         filtered_items = all_items_cached
     else:
@@ -283,14 +286,13 @@ if section == SECTIONS[1]:
         with col_p2:
             page_num = st.number_input(
                 "صفحة:", min_value=1, max_value=total_pages,
-                value=1, step=1, key="items_page_num"
+                value=1, step=1, key=f"{PFX}page_num"
             )
 
         start = (page_num - 1) * PAGE_SIZE
         end = start + PAGE_SIZE
         page_items_data = filtered_items[start:end]
 
-        # بناء الجدول
         data = []
         for it in page_items_data:
             data.append({
@@ -307,22 +309,20 @@ if section == SECTIONS[1]:
         st.dataframe(df, use_container_width=True, hide_index=True)
         st.caption(f"عرض {start + 1} - {min(end, total_count)} من {total_count}")
 
-        # أزرار التنقل
         if total_pages > 1:
             col_prev, col_next = st.columns(2)
             with col_prev:
-                if st.button("⬅️ السابق", disabled=(page_num <= 1), key="items_prev"):
-                    st.session_state["items_page_num"] = page_num - 1
+                if st.button("⬅️ السابق", disabled=(page_num <= 1), key=f"{PFX}items_prev"):
+                    st.session_state[f"{PFX}page_num"] = page_num - 1
                     st.rerun()
             with col_next:
-                if st.button("التالي ➡️", disabled=(page_num >= total_pages), key="items_next"):
-                    st.session_state["items_page_num"] = page_num + 1
+                if st.button("التالي ➡️", disabled=(page_num >= total_pages), key=f"{PFX}items_next"):
+                    st.session_state[f"{PFX}page_num"] = page_num + 1
                     st.rerun()
 
         st.markdown("---")
         st.subheader("🔎 اختيار صنف للتعديل أو الحذف")
 
-        # جلب الأصناف الفعلية للـ CodeSearch
         item_ids_page = [it["id"] for it in filtered_items]
         items_objects = db.query(models.Item).filter(
             models.Item.id.in_(item_ids_page)
@@ -480,7 +480,7 @@ if section == SECTIONS[1]:
                                 add_kit_components(db, sid, new_components)
 
                             db.commit()
-                            invalidate_all()   # ✅
+                            invalidate_all()
                             st.session_state[f"kitver_{sid}"] = st.session_state.get(f"kitver_{sid}", 0) + 1
                             nxt = next_selection(cs, sel_label, saved_item=selected_item)
                             queue_after_item_change(cs, nxt)
@@ -497,7 +497,10 @@ if section == SECTIONS[1]:
             if is_used_in_invoices:
                 st.error(f"🚫 لا يمكن حذف هذا الصنف! مستخدم في {len(invoice_lines)} فاتورة.")
             else:
-                confirm_delete = st.checkbox("تأكيد الحذف", key=f"confirm_del_{sid}")
+                confirm_delete = st.checkbox(
+                    "تأكيد الحذف",
+                    key=f"confirm_del_{sid}",
+                )
                 if st.button("🗑️ حذف الصنف", type="secondary",
                              disabled=not confirm_delete, key=f"del_item_{sid}"):
                     if require_modify("حذف الصنف"):
@@ -515,7 +518,7 @@ if section == SECTIONS[1]:
                             deleted_name = selected_item.name
                             db.delete(selected_item)
                             db.commit()
-                            invalidate_all()   # ✅
+                            invalidate_all()
 
                             queue_state_updates(
                                 delete_prefixes=("edit_", "kit_editor_", "confirm_del_"),
@@ -570,7 +573,11 @@ if section == SECTIONS[2]:
                 st.error(f"خطأ: {e}")
 
     with col2:
-        uploaded_file = st.file_uploader("اختر ملف:", type=['xlsx', 'csv'], key="upload_items")
+        uploaded_file = st.file_uploader(
+            "اختر ملف:",
+            type=['xlsx', 'csv'],
+            key=f"{PFX}upload_items",
+        )
 
         if uploaded_file:
             with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
@@ -584,8 +591,10 @@ if section == SECTIONS[2]:
                     if errors:
                         for error in errors[:5]:
                             st.write(f"- {error}")
-                    invalidate_all()   # ✅
-                    queue_state_updates(delete_keys=("upload_items",))
+                    invalidate_all()
+
+                    # ✅ تفريغ حقل الرفع
+                    clear_form(PFX)
                     st.rerun()
                 except Exception as e:
                     st.error(f"خطأ: {e}")
@@ -615,7 +624,11 @@ if section == SECTIONS[3]:
     st.markdown("---")
     st.subheader("📥 استيراد التصنيفات")
 
-    uploaded_file = st.file_uploader("اختر ملف التصنيفات:", type=['xlsx', 'csv'], key="upload_categories")
+    uploaded_file = st.file_uploader(
+        "اختر ملف التصنيفات:",
+        type=['xlsx', 'csv'],
+        key=f"{PFX}upload_categories",
+    )
 
     if uploaded_file:
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
@@ -626,8 +639,10 @@ if section == SECTIONS[3]:
             try:
                 count, errors = import_categories_from_file(tmp_path, created_by=current_user_id)
                 st.success(f"✅ تم استيراد {count} تصنيف!")
-                invalidate_all()   # ✅
-                queue_state_updates(delete_keys=("upload_categories",))
+                invalidate_all()
+
+                # ✅ تفريغ حقل الرفع
+                clear_form(PFX)
                 st.rerun()
             except Exception as e:
                 st.error(f"خطأ: {e}")
