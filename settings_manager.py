@@ -1,7 +1,6 @@
 # settings_manager.py
 """
 إدارة إعدادات التطبيق — مخزنة في قاعدة البيانات
-+ طبقة Caching لتسريع الوصول
 """
 
 import json
@@ -16,55 +15,45 @@ from models import AppSetting
 # ==========================================
 # الإعدادات الافتراضية
 # ==========================================
-# البنية: key → (default_value, type, category, description)
 DEFAULT_SETTINGS = {
-    # ===== عام =====
-    "company_name": ("شركتي", "text", "general", "اسم الشركة / المؤسسة"),
+    # عام
+    "company_name": ("شركتي", "text", "general", "اسم الشركة"),
     "company_tagline": ("نظام محاسبة متكامل", "text", "general", "الشعار النصي"),
-    "company_address": ("", "text", "general", "العنوان الكامل"),
-    "company_phone": ("", "text", "general", "رقم الهاتف"),
+    "company_address": ("", "text", "general", "العنوان"),
+    "company_phone": ("", "text", "general", "الهاتف"),
     "company_email": ("", "text", "general", "البريد الإلكتروني"),
     "company_tax_id": ("", "text", "general", "الرقم الضريبي"),
     "company_website": ("", "text", "general", "الموقع الإلكتروني"),
-
-    # ===== مالية =====
-    "default_currency_id": ("1", "number", "financial", "معرّف العملة الافتراضية"),
-    "default_tax_rate": ("14.0", "number", "financial", "نسبة الضريبة الافتراضية %"),
-    "default_discount_rate": ("0.0", "number", "financial", "نسبة الخصم الافتراضية %"),
-    "fiscal_year_start_month": ("1", "number", "financial", "شهر بداية السنة المالية"),
-    "currency_decimal_places": ("2", "number", "financial", "عدد المنازل العشرية"),
-
-    # ===== الفواتير =====
-    "invoice_prefix": ("INV", "text", "invoice", "بادئة رقم الفاتورة"),
-    "invoice_footer_text": ("شكراً لتعاملكم معنا", "text", "invoice", "نص أسفل الفاتورة"),
+    # مالية
+    "default_currency_id": ("1", "number", "financial", "العملة الافتراضية"),
+    "default_tax_rate": ("14.0", "number", "financial", "نسبة الضريبة %"),
+    "default_discount_rate": ("0.0", "number", "financial", "نسبة الخصم %"),
+    "fiscal_year_start_month": ("1", "number", "financial", "شهر بداية السنة"),
+    "currency_decimal_places": ("2", "number", "financial", "المنازل العشرية"),
+    # فواتير
+    "invoice_prefix": ("INV", "text", "invoice", "بادئة الفاتورة"),
+    "invoice_footer_text": ("شكراً لتعاملكم معنا", "text", "invoice", "نص التذييل"),
     "invoice_terms": ("", "text", "invoice", "الشروط والأحكام"),
-    "invoice_show_logo": ("true", "bool", "invoice", "إظهار الشعار في الفاتورة"),
-
-    # ===== الهوية =====
+    "invoice_show_logo": ("true", "bool", "invoice", "إظهار الشعار"),
+    # هوية
     "primary_color": ("#2563eb", "text", "branding", "اللون الأساسي"),
-    "company_logo_base64": ("", "image", "branding", "شعار الشركة (Base64)"),
-
-    # ===== التنبيهات =====
-    "low_stock_alerts": ("true", "bool", "notifications", "تنبيه المخزون المنخفض"),
-    "overdue_invoice_days": ("30", "number", "notifications", "أيام الفاتورة المتأخرة"),
+    "company_logo_base64": ("", "image", "branding", "شعار الشركة"),
+    # تنبيهات
+    "low_stock_alerts": ("true", "bool", "notifications", "تنبيه المخزون"),
+    "overdue_invoice_days": ("30", "number", "notifications", "أيام التأخير"),
     "credit_limit_alerts": ("true", "bool", "notifications", "تنبيه حد الائتمان"),
-
-    # ===== النظام =====
+    # نظام
     "system_version": ("1.0.0", "text", "system", "إصدار النظام"),
-    "last_backup_at": ("", "text", "system", "آخر نسخة احتياطية"),
+    "last_backup_at": ("", "text", "system", "آخر نسخة"),
 }
 
 
-# ==========================================
-# تهيئة الإعدادات الافتراضية
-# ==========================================
 def init_default_settings():
     """ينشئ الإعدادات الافتراضية إن لم تكن موجودة."""
     db = SessionLocal()
     try:
         existing_keys = {s.key for s in db.query(AppSetting).all()}
         added = 0
-
         for key, (value, s_type, cat, desc) in DEFAULT_SETTINGS.items():
             if key not in existing_keys:
                 db.add(AppSetting(
@@ -75,7 +64,6 @@ def init_default_settings():
                     description=desc,
                 ))
                 added += 1
-
         if added > 0:
             db.commit()
         return added
@@ -87,39 +75,28 @@ def init_default_settings():
 
 
 # ==========================================
-# قراءة إعداد
+# قراءة
 # ==========================================
 def get_setting(key: str, default: Any = None, cast: bool = True) -> Any:
-    """يقرأ إعداد من قاعدة البيانات مع تحويل النوع.
-
-    Args:
-        key: مفتاح الإعداد
-        default: القيمة الافتراضية إن لم يكن موجوداً
-        cast: تحويل القيمة لنوعها الصحيح
-
-    Returns:
-        قيمة الإعداد (بعد التحويل)
-    """
+    """يقرأ إعداد من قاعدة البيانات."""
     db = SessionLocal()
     try:
         setting = db.query(AppSetting).filter(AppSetting.key == key).first()
 
         if not setting:
-            # ارجع الافتراضي من DEFAULT_SETTINGS
             if key in DEFAULT_SETTINGS:
                 return _cast_value(DEFAULT_SETTINGS[key][0], DEFAULT_SETTINGS[key][1]) if cast else DEFAULT_SETTINGS[key][0]
             return default
 
         if not cast:
             return setting.value
-
         return _cast_value(setting.value, setting.setting_type)
     finally:
         db.close()
 
 
 def _cast_value(value: Any, setting_type: str) -> Any:
-    """يحوّل القيمة من نص إلى نوعها الصحيح."""
+    """يحوّل القيمة لنوعها."""
     if value is None:
         return None
     if setting_type == "number":
@@ -141,34 +118,21 @@ def _cast_value(value: Any, setting_type: str) -> Any:
 
 
 # ==========================================
-# حفظ إعداد
+# حفظ
 # ==========================================
 def set_setting(key: str, value: Any, user_id: Optional[int] = None, auto_init: bool = True) -> bool:
-    """يحفظ إعداد.
-
-    Args:
-        key: مفتاح الإعداد
-        value: القيمة الجديدة
-        user_id: معرف المستخدم الذي عدّل
-        auto_init: إنشاء السجل إن لم يكن موجوداً
-
-    Returns:
-        True عند النجاح
-    """
+    """يحفظ إعداد."""
     db = SessionLocal()
     try:
         setting = db.query(AppSetting).filter(AppSetting.key == key).first()
 
-        # لو مش موجود، أنشئه
         if not setting:
             if not auto_init:
                 return False
-
             if key in DEFAULT_SETTINGS:
                 _, s_type, cat, desc = DEFAULT_SETTINGS[key]
             else:
                 s_type, cat, desc = "text", "custom", None
-
             setting = AppSetting(
                 key=key,
                 value=str(value) if value is not None else "",
@@ -218,7 +182,7 @@ def set_many_settings(values_dict: dict, user_id: Optional[int] = None) -> int:
 # قراءة كل الإعدادات
 # ==========================================
 def get_all_settings(category: Optional[str] = None) -> dict:
-    """يرجع قاموس بكل الإعدادات (أو فئة معينة)."""
+    """يرجع قاموس بكل الإعدادات."""
     db = SessionLocal()
     try:
         q = db.query(AppSetting)
@@ -260,7 +224,6 @@ def reset_setting(key: str, user_id: Optional[int] = None) -> bool:
     """يستعيد إعداد لقيمته الافتراضية."""
     if key not in DEFAULT_SETTINGS:
         return False
-
     default_value = DEFAULT_SETTINGS[key][0]
     return set_setting(key, default_value, user_id)
 
@@ -285,10 +248,10 @@ def reset_all_settings(user_id: Optional[int] = None) -> int:
 
 
 # ==========================================
-# دوال مساعدة جاهزة للاستخدام
+# دوال مساعدة
 # ==========================================
 def get_company_info() -> dict:
-    """يرجع بيانات الشركة كقاموس (للاستخدام في PDF والفواتير)."""
+    """يرجع بيانات الشركة."""
     return {
         "name": get_setting("company_name", "شركتي"),
         "tagline": get_setting("company_tagline", ""),
@@ -303,7 +266,7 @@ def get_company_info() -> dict:
 
 
 def get_financial_defaults() -> dict:
-    """يرجع الإعدادات المالية الافتراضية (للفواتير الجديدة)."""
+    """يرجع الإعدادات المالية الافتراضية."""
     return {
         "currency_id": int(get_setting("default_currency_id", 1)),
         "tax_rate": float(get_setting("default_tax_rate", 14.0)),
@@ -313,7 +276,7 @@ def get_financial_defaults() -> dict:
 
 
 def get_invoice_defaults() -> dict:
-    """يرجع إعدادات الفواتير الافتراضية."""
+    """يرجع إعدادات الفواتير."""
     return {
         "prefix": get_setting("invoice_prefix", "INV"),
         "footer": get_setting("invoice_footer_text", ""),

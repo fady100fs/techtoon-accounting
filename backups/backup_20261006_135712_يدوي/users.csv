@@ -1,0 +1,4 @@
+﻿id,username,password_hash,full_name,email,role,is_active,created_at,last_login
+2,Fady,$2b$12$QSMaWCnCOXYCJOQgCoyNiOshOckMaPefpuTVNTRYuo2NhsIyfkP56,فادي سعد,,ADMIN,True,2026-10-03 12:57:46.343760,2026-10-03 12:58:24.061624
+3,كاشير,$2b$12$Q/OgxsZB4TDn19VYaEULf.hY26N8Lnx4t3gL4h/cqPWui2SMF7DMK,كاشير,,SALESPERSON,True,2026-10-03 21:59:55.101412,2026-10-03 22:07:28.156098
+1,admin,$2b$12$xcz9NxVR4P6.gukQ1jNFmups6WZ0w7zzJuOOWplDo.L1pnEvIZfxi,المدير العام,admin@techtoon.com,ADMIN,True,2026-10-01 20:07:45.128664,2026-10-05 22:48:13.143301

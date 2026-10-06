@@ -1,0 +1,5 @@
+﻿id,invoice_number,date,due_date,party_id,type,total_amount,status,currency_id,discount_amount,discount_percentage,tax_rate,tax_amount,net_amount,created_by
+1,INV-000001,2026-10-03 22:45:20.665346,,1,sale,200.0,cancelled,1,0.0,0.0,0.0,0.0,200.0,1
+2,INV-000002,2026-10-03 22:58:50.864359,,1,sale,260.0,cancelled,1,0.0,0.0,0.0,0.0,260.0,1
+11,INV-000003,2026-10-05 11:00:08.239970,,1,sale,1274.2,paid,1,0.0,0.0,0.0,0.0,1274.2,1
+17,INV-000004,2026-10-05 23:22:53.997323,,1,sale,490.0,pending,1,0.0,0.0,0.0,0.0,490.0,1
