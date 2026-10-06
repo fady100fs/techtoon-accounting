@@ -677,5 +677,17 @@ class RecurringInvoiceLine(Base):
     template = relationship("RecurringInvoiceTemplate", back_populates="lines")
     item = relationship("Item")
 # إنشاء جميع الجداول
+# ==================== 24. إعدادات التطبيق (جديد) ====================
+class AppSetting(Base):
+    __tablename__ = 'app_settings'
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(100), unique=True, nullable=False, index=True)
+    value = Column(Text, nullable=True)
+    setting_type = Column(String(20), default='text')  # text, number, bool, json, image
+    category = Column(String(50), default='general', index=True)
+    description = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(Integer, ForeignKey('users.id'), nullable=True)
 from database import engine
 Base.metadata.create_all(bind=engine)
