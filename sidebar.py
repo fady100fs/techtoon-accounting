@@ -32,27 +32,33 @@ REPORTS = {"ADMIN", "ACCOUNTANT", "VIEWER"}
 SALES = {"ADMIN", "ACCOUNTANT", "SALESPERSON"}
 
 PAGE_ACCESS = {
+    # الحساب
     "تسجيل_الدخول": ALL,
     "إدارة_المستخدمين": ADMIN_ONLY,
+    # تكويد
     "الاصناف": ALL,
     "التصنيفات": MANAGEMENT,
     "عملاء": ALL,
     "شجرة_الحسابات": MANAGEMENT,
     "كشف_حساب": REPORTS,
     "العملات": MANAGEMENT,
+    # عمليات
     "الفواتير": SALES,
     "فهرس_الفواتير": ALL,
     "المدفوعات": MANAGEMENT,
     "المصروفات": MANAGEMENT,
     "الخزائن": MANAGEMENT,
     "قيود_اليومية": MANAGEMENT,
+    # مخزون
     "إدارة_المخزون": MANAGEMENT,
     "الأصول_الثابتة": MANAGEMENT,
+    # مالية
     "إدارة_القروض": MANAGEMENT,
     "الموظفين_والرواتب": ADMIN_ONLY,
     "الإغلاق_المحاسبي": MANAGEMENT,
     "مراكز_التكلفة": MANAGEMENT,
     "الميزانية_العمومية": REPORTS,
+    # تقارير
     "لوحة_التحكم": REPORTS,
     "التقارير": REPORTS,
     "تقارير_متقدمة": REPORTS,
@@ -61,10 +67,12 @@ PAGE_ACCESS = {
     "التقارير_المالية": REPORTS,
     "التنبيهات": ALL,
     "مركز_التذكيرات": ALL,
+    # أدوات
     "قارئ_الباركود": ALL,
-    "الفواتير_المتكررة": MANAGEMENT,
+    # "الفواتير_المتكررة": MANAGEMENT,  # ⏸️ معطّلة مؤقتاً
     "البحث_الموحد": ALL,
     "تقارير_PDF": MANAGEMENT,
+    # نظام
     "النسخ_الاحتياطي": MANAGEMENT,
     "النسخ_السحابي": MANAGEMENT,
     "فحص_السلامة": MANAGEMENT,
@@ -116,7 +124,7 @@ GROUPS = [
     ("🛠️ أدوات", [
         ("🔍 البحث الموحد", "البحث_الموحد", "🔍"),
         ("قارئ الباركود", "قارئ_الباركود", "📷"),
-        ("الفواتير المتكررة", "الفواتير_المتكررة", "🔄"),
+        # ("الفواتير المتكررة", "الفواتير_المتكررة", "🔄"),  # ⏸️ معطّلة مؤقتاً
         ("📄 تقارير PDF", "تقارير_PDF", "📄"),
     ]),
     ("🛠️ نظام", [
@@ -132,6 +140,7 @@ GROUPS = [
 # أدوات مساعدة
 # ==========================================================
 def _norm(text):
+    """يحذف الرقم البادئ والرموز غير الأبجدية من اسم الملف."""
     text = re.sub(r"^\d+_", "", text)
     text = re.sub(r"[^\w\s]", "", text)
     return text.strip()
@@ -143,14 +152,27 @@ def _build_index():
 
 
 def _find_page(term, index):
+    """يبحث عن صفحة بالاسم.
+
+    الترتيب:
+    1) تطابق تام (normalized)
+    2) الأقصر بين كل من يحتوي على term
+       ← هذا يحل مشكلة "الفواتير" (يختار 4_ وليس 34_)
+    """
     t = _norm(term)
+
+    # 1) تطابق تام
     for f, name in index:
         if name == t:
             return f
-    for f, name in index:
-        if t in name:
-            return f
-    return None
+
+    # 2) أي تطابق جزئي — نرتّب حسب طول الاسم (الأقصر أولاً)
+    matches = [(f, name) for f, name in index if t in name]
+    if not matches:
+        return None
+
+    matches.sort(key=lambda x: len(x[1]))
+    return matches[0][0]
 
 
 def _role_name(user):
@@ -203,7 +225,7 @@ def require_modify(action="هذه العملية"):
 
 
 # ==========================================================
-# إدارة حالة الصفحة + queue_state_updates
+# إدارة حالة الصفحة
 # ==========================================================
 _PRESERVE_KEYS = ("current_user", "_active_page")
 
@@ -245,7 +267,6 @@ def _reset_page_state_on_navigation(caller_path):
 
 
 def queue_state_updates(delete_prefixes=(), delete_keys=(), set_values=None):
-    """يؤجّل تعديل session_state إلى بداية الـ run التالي."""
     pending = st.session_state.get("_pending_state") or {"prefixes": [], "keys": [], "set": {}}
     pending["prefixes"] = list(pending["prefixes"]) + list(delete_prefixes)
     pending["keys"] = list(pending["keys"]) + list(delete_keys)
@@ -337,9 +358,7 @@ def _term_for_file(path):
 def render_sidebar():
     caller = Path(inspect.currentframe().f_back.f_code.co_filename).resolve()
 
-    # ✅ تفريغ النماذج المعلّق — قبل أي شيء آخر
     apply_pending_clears()
-
     restore_session()
     _reset_page_state_on_navigation(caller)
     _apply_pending_state()
@@ -358,7 +377,8 @@ def render_sidebar():
         if not can_modify(user):
             st.caption("✏️ التعديل والحذف للمدير فقط")
 
-        if st.button("🔍 البحث الموحد", use_container_width=True, key="top_global_search"):
+        if st.button("🔍 البحث الموحد", use_container_width=True,
+                     key="top_global_search"):
             index = _build_index()
             f = _find_page("البحث_الموحد", index)
             if f:
