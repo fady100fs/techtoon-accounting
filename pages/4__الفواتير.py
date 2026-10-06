@@ -2,6 +2,7 @@
 import re
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -27,14 +28,8 @@ import models
 from services import create_invoice, create_payment
 from period_guard import check_period_open
 from auth_required import require_login, get_current_user_id, get_current_user_name
-from form_manager import clear_form, show_clear_hint
 from code_search import CodeSearch, FormState
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "inv_"
-
+from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -46,6 +41,12 @@ try:
     add_enter_hint()
 except Exception:
     pass
+
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لمفاتيح النماذج التي لا تستخدم FormState
+# ═══════════════════════════════════════════════════════════
+PFX = "inv_"
 
 
 # ==========================================
@@ -125,7 +126,6 @@ def _clear_edit_state():
 
 
 def _delete_invoice_fully(db, invoice):
-    # ✅ فحص الفترة المحاسبية
     if invoice.date:
         check_period_open(invoice.date, entity="حذف فاتورة")
 
@@ -259,11 +259,9 @@ def _status_badge(status):
 
 
 def _delete_payment(db, payment_id):
-    """يحذف دفعة."""
     try:
         p = db.query(models.Payment).filter(models.Payment.id == payment_id).first()
         if p:
-            # ✅ فحص الفترة
             if p.date:
                 check_period_open(p.date, entity="حذف دفعة")
 
@@ -470,7 +468,15 @@ def render_payment_section(db, invoice):
                             _update_invoice_status(db, inv_fresh)
                         st.success(f"✅ تم تسجيل دفعة {amount:,.2f} ج.م بنجاح!")
                         st.balloons()
-                        clear_form(PFX)  # ✅ تفريغ الحقول
+
+                        # ✅ تفريغ كل مفاتيح الدفع لهذه الفاتورة
+                        clear_form(f"pay_", extra_keys=(
+                            f"pay_amount_{invoice.id}",
+                            f"pay_method_{invoice.id}",
+                            f"pay_box_{invoice.id}",
+                            f"pay_ref_{invoice.id}",
+                            f"pay_notes_{invoice.id}",
+                        ))
                         st.rerun()
                 except Exception as e:
                     db.rollback()
@@ -500,7 +506,6 @@ def render_payment_section(db, invoice):
                         if inv_fresh:
                             _update_invoice_status(db, inv_fresh)
                         st.success("✅ تم حذف الدفعة.")
-                        clear_form(PFX)  # ✅ تفريغ الحقول
                         st.rerun()
                     else:
                         st.error("❌ فشل حذف الدفعة.")
@@ -573,7 +578,6 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
             if st.button("✏️ تحميل للتعديل", type="primary", use_container_width=True,
                          key=f"edit_inv_{invoice.id}"):
                 try:
-                    # ✅ فحص الفترة
                     if invoice.date:
                         check_period_open(invoice.date, entity="تعديل فاتورة")
 
@@ -602,6 +606,8 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
                         delete_keys=("inv_items_editor",),
                         set_values={no_key: next_no, "invoice_items": []},
                     )
+                    # ✅ تفريغ كل مفاتيح الفواتير
+                    clear_form(PFX)
                     st.rerun()
                 except Exception as e:
                     db.rollback()
@@ -622,8 +628,7 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
 fs = FormState("inv", cart_keys=("invoice_items",))
 
 st.title("🧾 إنشاء الفواتير")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
+show_clear_hint()   # ✅ تلميح
 st.info(f"👤 المستخدم: **{current_user_name}**")
 
 flash = st.session_state.pop("_inv_flash", None)
@@ -661,13 +666,13 @@ if is_editing:
     with col_banner:
         st.info(f"🔴 **وضع التعديل** — أنت تعدّل الفاتورة **{editing_no}**.")
     with col_cancel:
-        if st.button("❌ إلغاء التعديل", use_container_width=True, key=f"{PFX}cancel_edit_btn"):
+        if st.button("❌ إلغاء التعديل", use_container_width=True, key="cancel_edit_btn"):
             _clear_edit_state()
             queue_state_updates(
                 delete_keys=("inv_items_editor",),
                 set_values={no_key: next_no, "invoice_items": []},
             )
-            clear_form(PFX)  # ✅ تفريغ الحقول
+            clear_form(PFX)
             st.rerun()
 
 if kb['new']:
@@ -676,6 +681,7 @@ if kb['new']:
         delete_keys=("inv_items_editor",),
         set_values={no_key: next_no, "invoice_items": []},
     )
+    clear_form(PFX)
     st.rerun()
 
 if kb['clear']:
@@ -683,11 +689,11 @@ if kb['clear']:
         delete_keys=("inv_items_editor",),
         set_values={"invoice_items": []},
     )
+    clear_form(PFX)
     st.rerun()
 
 col_no, col_state = st.columns([1, 3])
 with col_no:
-    # ✅ إصلاح تحذير Session State
     if no_key not in st.session_state:
         st.session_state[no_key] = next_no
 
@@ -770,6 +776,8 @@ if st.button("➕ إضافة للفاتورة"):
             'price': price
         })
         st.toast(f"✅ تمت إضافة {current_item.name}")
+        # ✅ تفريغ خانة البحث
+        clear_form(cs.query_key)
         st.rerun()
     else:
         st.error("يرجى اختيار صنف وإدخال كمية وسعر صحيحين")
@@ -794,7 +802,7 @@ if st.session_state.invoice_items:
         df_edit,
         num_rows="dynamic",
         use_container_width=True,
-        key=f"{PFX}inv_items_editor",
+        key="inv_items_editor",
         column_config={
             "الصنف": st.column_config.TextColumn("الصنف", required=True, width="large"),
             "الكمية": st.column_config.NumberColumn("الكمية", min_value=0.0, step=1.0, format="%.2f"),
@@ -857,6 +865,7 @@ if st.session_state.invoice_items:
                 delete_keys=("inv_items_editor",),
                 set_values={"invoice_items": []},
             )
+            clear_form(PFX, f"newinv_")
             st.rerun()
 
     if kb['save']:
@@ -888,7 +897,6 @@ if st.session_state.invoice_items:
         if can_save:
             saved_msg = None
             try:
-                # ✅ فحص الفترة قبل الحفظ
                 check_period_open(datetime.now(), entity="حفظ فاتورة")
 
                 names = {ln['item_name'] for ln in st.session_state.invoice_items}
@@ -955,6 +963,8 @@ if st.session_state.invoice_items:
                     delete_keys=("inv_items_editor",),
                     set_values={"invoice_items": []},
                 )
+                # ✅ تفريغ كل مفاتيح النموذج + المدفوعات الجديدة
+                clear_form(PFX, f"newinv_")
                 db.close()
                 fs.reset()
 else:

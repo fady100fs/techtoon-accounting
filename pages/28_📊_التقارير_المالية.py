@@ -20,13 +20,6 @@ from services import (
     create_budget, get_budget_vs_actual
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
-from form_manager import clear_form, show_clear_hint
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "fin_rep_"
-
 
 # التحقق من تسجيل الدخول
 current_user = require_login()
@@ -35,8 +28,6 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="التقارير المالية", page_icon="", layout="wide")
 st.title(" التقارير المالية المتقدمة")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
@@ -181,9 +172,9 @@ with tab3:
     
     col1, col2 = st.columns(2)
     with col1:
-        tb_start = st.date_input("من تاريخ:", value=datetime.now().replace(month=1, day=1), key=f"{PFX}tb_start")
+        tb_start = st.date_input("من تاريخ:", value=datetime.now().replace(month=1, day=1), key="tb_start")
     with col2:
-        tb_end = st.date_input("إلى تاريخ:", value=datetime.now(), key=f"{PFX}tb_end")
+        tb_end = st.date_input("إلى تاريخ:", value=datetime.now(), key="tb_end")
     
     if st.button("📊 عرض ميزان المراجعة", type="primary"):
         trial_balance = get_trial_balance(tb_start, tb_end)
@@ -219,9 +210,9 @@ with tab4:
     
     col1, col2 = st.columns(2)
     with col1:
-        cf_start = st.date_input("من تاريخ:", value=datetime.now().replace(month=1, day=1), key=f"{PFX}cf_start")
+        cf_start = st.date_input("من تاريخ:", value=datetime.now().replace(month=1, day=1), key="cf_start")
     with col2:
-        cf_end = st.date_input("إلى تاريخ:", value=datetime.now(), key=f"{PFX}cf_end")
+        cf_end = st.date_input("إلى تاريخ:", value=datetime.now(), key="cf_end")
     
     if st.button("📊 عرض التدفقات النقدية", type="primary"):
         cash_flow = get_cash_flow_statement(cf_start, cf_end)
@@ -276,9 +267,9 @@ with tab5:
     
     col1, col2 = st.columns(2)
     with col1:
-        ratio_start = st.date_input("من تاريخ:", value=datetime.now().replace(month=1, day=1), key=f"{PFX}ratio_start")
+        ratio_start = st.date_input("من تاريخ:", value=datetime.now().replace(month=1, day=1), key="ratio_start")
     with col2:
-        ratio_end = st.date_input("إلى تاريخ:", value=datetime.now(), key=f"{PFX}ratio_end")
+        ratio_end = st.date_input("إلى تاريخ:", value=datetime.now(), key="ratio_end")
     
     if st.button("📊 حساب النسب المالية", type="primary"):
         ratios = get_financial_ratios(ratio_start, ratio_end)
@@ -377,7 +368,6 @@ with tab6:
                         created_by=current_user_id
                     )
                     st.success("✅ تم حفظ الموازنة بنجاح!")
-                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
@@ -387,9 +377,9 @@ with tab6:
         
         col1, col2 = st.columns(2)
         with col1:
-            compare_month = st.number_input("الشهر:", min_value=1, max_value=12, value=datetime.now().month, key=f"{PFX}compare_month")
+            compare_month = st.number_input("الشهر:", min_value=1, max_value=12, value=datetime.now().month, key="compare_month")
         with col2:
-            compare_year = st.number_input("السنة:", min_value=2020, max_value=2100, value=datetime.now().year, key=f"{PFX}compare_year")
+            compare_year = st.number_input("السنة:", min_value=2020, max_value=2100, value=datetime.now().year, key="compare_year")
         
         if st.button("📊 عرض المقارنة", type="primary"):
             comparison = get_budget_vs_actual(compare_month, compare_year)

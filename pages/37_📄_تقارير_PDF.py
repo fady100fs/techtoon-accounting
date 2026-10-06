@@ -25,21 +25,12 @@ from services import (
     get_user_name_by_id,
 )
 from auth_required import require_login, get_current_user_name
-from form_manager import clear_form, show_clear_hint
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "pdf_rep_"
-
 
 current_user = require_login()
 current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="تقارير PDF", page_icon="📄", layout="wide")
 st.title("📄 تقارير PDF الاحترافية")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}**")
 
 
@@ -105,14 +96,14 @@ with tab1:
             "نوع الفاتورة:",
             ["الكل", "بيع", "شراء"],
             horizontal=True,
-            key=f"{PFX}pdf_inv_type",
+            key="pdf_inv_type",
         )
     with col_f2:
         days = st.number_input(
             "آخر كم يوم:",
             min_value=1, max_value=365,
             value=90, step=30,
-            key=f"{PFX}pdf_inv_days",
+            key="pdf_inv_days",
         )
 
     # جلب الفواتير
@@ -138,7 +129,7 @@ with tab1:
             "اختر فاتورة:",
             options=list(inv_opts.keys()),
             format_func=lambda x: inv_opts[x],
-            key=f"{PFX}pdf_inv_sel",
+            key="pdf_inv_sel",
         )
 
         if selected_inv_id:
@@ -155,7 +146,7 @@ with tab1:
                 with col_c:
                     st.metric("الصافي", f"{inv.net_amount:,.2f} ج.م")
 
-                if st.button("📄 توليد PDF", type="primary", use_container_width=True, key=f"{PFX}gen_inv_pdf"):
+                if st.button("📄 توليد PDF", type="primary", use_container_width=True, key="gen_inv_pdf"):
                     try:
                         from export_pdf import export_invoice_to_pdf
 
@@ -170,7 +161,7 @@ with tab1:
                             data=pdf_bytes,
                             file_name=output_path,
                             mime="application/pdf",
-                            key=f"{PFX}dl_inv_pdf",
+                            key="dl_inv_pdf",
                         )
                     except Exception as e:
                         st.error(f"❌ خطأ: {e}")
@@ -191,7 +182,7 @@ with tab2:
             ["customer", "supplier"],
             format_func=lambda x: "عميل" if x == "customer" else "مورد",
             horizontal=True,
-            key=f"{PFX}pdf_stmt_type",
+            key="pdf_stmt_type",
         )
     with col_f2:
         st.write("")
@@ -208,7 +199,7 @@ with tab2:
             "اختر الطرف:",
             options=list(party_opts.keys()),
             format_func=lambda x: party_opts[x],
-            key=f"{PFX}pdf_stmt_party",
+            key="pdf_stmt_party",
         )
 
         col_d1, col_d2 = st.columns(2)
@@ -216,16 +207,16 @@ with tab2:
             from_date = st.date_input(
                 "من تاريخ:",
                 value=datetime.now().replace(day=1).date(),
-                key=f"{PFX}pdf_stmt_from",
+                key="pdf_stmt_from",
             )
         with col_d2:
             to_date = st.date_input(
                 "إلى تاريخ:",
                 value=date.today(),
-                key=f"{PFX}pdf_stmt_to",
+                key="pdf_stmt_to",
             )
 
-        if st.button("📄 توليد كشف حساب", type="primary", use_container_width=True, key=f"{PFX}gen_stmt_pdf"):
+        if st.button("📄 توليد كشف حساب", type="primary", use_container_width=True, key="gen_stmt_pdf"):
             try:
                 from services import _build_statement_data  # سأضيفها لاحقاً
             except ImportError:
@@ -328,7 +319,7 @@ with tab2:
                     data=pdf_bytes,
                     file_name=output_path,
                     mime="application/pdf",
-                    key=f"{PFX}dl_stmt_pdf",
+                    key="dl_stmt_pdf",
                 )
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -345,10 +336,10 @@ with tab3:
     as_of = st.date_input(
         "بتاريخ:",
         value=date.today(),
-        key=f"{PFX}pdf_bs_date",
+        key="pdf_bs_date",
     )
 
-    if st.button("📄 توليد الميزانية", type="primary", use_container_width=True, key=f"{PFX}gen_bs_pdf"):
+    if st.button("📄 توليد الميزانية", type="primary", use_container_width=True, key="gen_bs_pdf"):
         try:
             balance_data = get_balance_sheet(datetime.combine(as_of, datetime.max.time()))
 
@@ -364,7 +355,7 @@ with tab3:
                 data=pdf_bytes,
                 file_name=output_path,
                 mime="application/pdf",
-                key=f"{PFX}dl_bs_pdf",
+                key="dl_bs_pdf",
             )
 
             # معاينة
@@ -393,16 +384,16 @@ with tab4:
         pl_from = st.date_input(
             "من تاريخ:",
             value=datetime.now().replace(month=1, day=1).date(),
-            key=f"{PFX}pdf_pl_from",
+            key="pdf_pl_from",
         )
     with col_d2:
         pl_to = st.date_input(
             "إلى تاريخ:",
             value=date.today(),
-            key=f"{PFX}pdf_pl_to",
+            key="pdf_pl_to",
         )
 
-    if st.button("📄 توليد التقرير", type="primary", use_container_width=True, key=f"{PFX}gen_pl_pdf"):
+    if st.button("📄 توليد التقرير", type="primary", use_container_width=True, key="gen_pl_pdf"):
         try:
             pl_data = get_income_statement(
                 datetime.combine(pl_from, datetime.min.time()),
@@ -421,7 +412,7 @@ with tab4:
                 data=pdf_bytes,
                 file_name=output_path,
                 mime="application/pdf",
-                key=f"{PFX}dl_pl_pdf",
+                key="dl_pl_pdf",
             )
 
             # معاينة

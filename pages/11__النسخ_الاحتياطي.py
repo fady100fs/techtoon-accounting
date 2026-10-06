@@ -12,13 +12,6 @@ from datetime import datetime, timedelta
 from backup_manager import backup_manager
 from audit_log import get_audit_logs, get_audit_summary, log_action
 from auth_required import require_login, get_current_user_id, get_current_user_name
-from form_manager import clear_form, show_clear_hint
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "bkup_"
-
 
 # التحقق من تسجيل الدخول
 current_user = require_login()
@@ -27,8 +20,6 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="النسخ الاحتياطي والأمان", page_icon="💾", layout="wide")
 st.title("💾 النسخ الاحتياطي والأمان")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 st.info(f" المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
@@ -77,7 +68,6 @@ with tab1:
                     action_type="backup",
                     description="إنشاء نسخة احتياطية يدوية"
                 )
-                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             else:
                 st.error(f"❌ {message}")

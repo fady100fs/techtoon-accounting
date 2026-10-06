@@ -16,16 +16,9 @@ from database import SessionLocal
 import models
 from models import ExpenseCategory, Expense, CashBox
 from auth_required import require_login, get_current_user_id, get_current_user_name
-from form_manager import clear_form, show_clear_hint
 
 # ✅ Cache Layer
 from cache_helpers import (
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "dash_"
-
     get_dashboard_kpis,
     get_inventory_summary,
 )
@@ -57,8 +50,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏠 لوحة التحكم التنفيذية")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 مرحباً **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 db = SessionLocal()

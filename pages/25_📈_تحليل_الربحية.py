@@ -20,13 +20,6 @@ from services import (
     compare_periods, get_top_profitable_items, get_profitability_summary
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
-from form_manager import clear_form, show_clear_hint
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "prof_"
-
 
 # التحقق من تسجيل الدخول
 current_user = require_login()
@@ -35,8 +28,6 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="تحليل الربحية", page_icon="📈", layout="wide")
 st.title("📈 تحليل الربحية المتقدم")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
@@ -325,13 +316,13 @@ with tab6:
     
     with col1:
         st.markdown("### 📅 الفترة الأولى")
-        p1_start = st.date_input("من تاريخ:", value=datetime.now().replace(month=1, day=1), key=f"{PFX}p1_start")
-        p1_end = st.date_input("إلى تاريخ:", value=datetime.now(), key=f"{PFX}p1_end")
+        p1_start = st.date_input("من تاريخ:", value=datetime.now().replace(month=1, day=1), key="p1_start")
+        p1_end = st.date_input("إلى تاريخ:", value=datetime.now(), key="p1_end")
     
     with col2:
         st.markdown("### 📅 الفترة الثانية")
-        p2_start = st.date_input("من تاريخ:", value=(datetime.now() - timedelta(days=365)).replace(month=1, day=1), key=f"{PFX}p2_start")
-        p2_end = st.date_input("إلى تاريخ:", value=datetime.now() - timedelta(days=365), key=f"{PFX}p2_end")
+        p2_start = st.date_input("من تاريخ:", value=(datetime.now() - timedelta(days=365)).replace(month=1, day=1), key="p2_start")
+        p2_end = st.date_input("إلى تاريخ:", value=datetime.now() - timedelta(days=365), key="p2_end")
     
     if st.button("📊 مقارنة الفترتين", type="primary"):
         comparison = compare_periods(p1_start, p1_end, p2_start, p2_end)

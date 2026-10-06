@@ -1,6 +1,3 @@
-2026/10/06-14:33:16.840 2ff54 Reusing MANIFEST D:\PROG\Accounting Prog\Techtoon Accounting\.webview_data\EBWebView\Default\Local Storage\leveldb/MANIFEST-000001
-2026/10/06-14:33:16.840 2ff54 Recovering log #3
-2026/10/06-14:33:16.842 2ff54 Reusing old log D:\PROG\Accounting Prog\Techtoon Accounting\.webview_data\EBWebView\Default\Local Storage\leveldb/000003.log 
-2026/10/06-14:41:18.076 2aefc Level-0 table #5: started
-2026/10/06-14:41:18.081 2aefc Level-0 table #5: 8355 bytes OK
-2026/10/06-14:41:18.086 2aefc Delete type=0 #3
+2026/10/06-15:06:15.460 30dc0 Reusing MANIFEST D:\PROG\Accounting Prog\Techtoon Accounting\.webview_data\EBWebView\Default\Local Storage\leveldb/MANIFEST-000001
+2026/10/06-15:06:15.461 30dc0 Recovering log #4
+2026/10/06-15:06:15.462 30dc0 Reusing old log D:\PROG\Accounting Prog\Techtoon Accounting\.webview_data\EBWebView\Default\Local Storage\leveldb/000004.log 

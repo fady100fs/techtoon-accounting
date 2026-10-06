@@ -24,12 +24,6 @@ from period_guard import check_period_open
 from auth_required import require_login, get_current_user_id, get_current_user_name
 from form_manager import clear_form, show_clear_hint   # ✅ جديد
 
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "cm_"
-
-
 current_user = require_login()
 current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
@@ -444,7 +438,6 @@ with tab1:
 
                 # ✅ المبدأ العام: تفريغ كل خانات النموذج
                 clear_form(PFX_NEW)
-                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -678,7 +671,6 @@ with tab3:
 
                             # ✅ المبدأ: تفريغ كل خانات التعديل
                             clear_form(PFX_EDIT)
-                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")
@@ -706,7 +698,6 @@ with tab3:
 
                             # ✅ المبدأ: تفريغ كل خانات التعديل والحذف
                             clear_form(PFX_EDIT, PFX_DEL)
-                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                         except Exception as e:
                             db.rollback()
@@ -725,15 +716,15 @@ with tab4:
     with col1:
         rep_start = st.date_input(
             "من تاريخ:", value=datetime.now().replace(day=1).date(),
-            key=f"{PFX}cm_rep_start",
+            key="cm_rep_start",
         )
     with col2:
         rep_end = st.date_input(
             "إلى تاريخ:", value=datetime.now().date(),
-            key=f"{PFX}cm_rep_end",
+            key="cm_rep_end",
         )
 
-    if st.button("📊 عرض التقرير", type="primary", key=f"{PFX}cm_show_report"):
+    if st.button("📊 عرض التقرير", type="primary", key="cm_show_report"):
         s = datetime.combine(rep_start, datetime.min.time())
         e = datetime.combine(rep_end, datetime.max.time())
 

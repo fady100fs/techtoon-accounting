@@ -13,20 +13,11 @@ from database import SessionLocal
 import models
 from models import AccountType, Account, Party, CashBox, ExpenseCategory
 from auth_required import require_login
-from form_manager import clear_form, show_clear_hint
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "coa_"
-
 
 current_user = require_login()
 
 st.set_page_config(page_title="شجرة الحسابات", page_icon="📚", layout="wide")
 st.title("📚 إدارة شجرة الحسابات")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 try:
     from keyboard_nav import enable_enter_navigation, add_enter_hint
@@ -115,7 +106,7 @@ with tab1:
     account_type = st.selectbox(
         "نوع الحساب:",
         options=[acc_type.value for acc_type in AccountType],
-        key=f"{PFX}new_acc_type",
+        key="new_acc_type",
     )
 
     parent_accounts = db.query(Account).filter(
@@ -132,11 +123,11 @@ with tab1:
         format_func=lambda x: next(
             (k for k, v in parent_options.items() if v == x), "بدون"
         ),
-        key=f"{PFX}new_acc_parent",
+        key="new_acc_parent",
     )
 
-    code = st.text_input("كود الحساب:", placeholder="مثال: 1103", key=f"{PFX}new_acc_code")
-    name = st.text_input("اسم الحساب:", placeholder="مثال: صندوق فرعي", key=f"{PFX}new_acc_name")
+    code = st.text_input("كود الحساب:", placeholder="مثال: 1103", key="new_acc_code")
+    name = st.text_input("اسم الحساب:", placeholder="مثال: صندوق فرعي", key="new_acc_name")
 
     if st.button("💾 حفظ الحساب", type="primary", use_container_width=True):
         if not code or not name:
@@ -167,7 +158,6 @@ with tab1:
                             "new_acc_parent": None,
                         },
                     )
-                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
             except Exception as e:
                 db.rollback()
@@ -232,7 +222,7 @@ with tab2:
                 (f"{a.code} - {a.name}" for a in all_accounts if a.id == x),
                 str(x),
             ),
-            key=f"{PFX}sel_account_for_edit",
+            key="sel_account_for_edit",
         )
 
         if selected_account_id:
@@ -286,7 +276,6 @@ with tab2:
                                 selected.name = new_name.strip()
                                 db.commit()
                                 st.success("✅ تم تحديث الحساب بنجاح!")
-                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                     except Exception as e:
                         db.rollback()
@@ -343,7 +332,6 @@ with tab2:
                                 f"confirm_del_{selected_account_id}",
                             ),
                         )
-                        clear_form(PFX)  # ✅ تفريغ الحقول
                         st.rerun()
                     except Exception as e:
                         db.rollback()

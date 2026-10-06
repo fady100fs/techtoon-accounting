@@ -18,21 +18,12 @@ from models import (
 )
 from services import movement_serial
 from auth_required import require_login, get_current_user_name
-from form_manager import clear_form, show_clear_hint
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "search_"
-
 
 current_user = require_login()
 current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="البحث الموحد", page_icon="🔍", layout="wide")
 st.title("🔍 البحث الموحد في النظام")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}**")
 
 st.markdown("""
@@ -53,7 +44,7 @@ with col_q:
     query = st.text_input(
         "🔍 ابحث عن أي شيء...",
         placeholder="اسم عميل، باركود، رقم فاتورة، رقم مسلسل، مبلغ...",
-        key=f"{PFX}gs_query",
+        key="gs_query",
     )
 with col_btn:
     st.write("")
@@ -67,14 +58,14 @@ st.markdown("---")
 with st.expander("⚙️ خيارات البحث المتقدم", expanded=False):
     col_a, col_b, col_c = st.columns(3)
     with col_a:
-        search_party = st.checkbox("العملاء والموردين", value=True, key=f"{PFX}gs_party")
-        search_items = st.checkbox("الأصناف", value=True, key=f"{PFX}gs_items")
+        search_party = st.checkbox("العملاء والموردين", value=True, key="gs_party")
+        search_items = st.checkbox("الأصناف", value=True, key="gs_items")
     with col_b:
-        search_invoices = st.checkbox("الفواتير", value=True, key=f"{PFX}gs_invoices")
-        search_payments = st.checkbox("المدفوعات", value=True, key=f"{PFX}gs_payments")
+        search_invoices = st.checkbox("الفواتير", value=True, key="gs_invoices")
+        search_payments = st.checkbox("المدفوعات", value=True, key="gs_payments")
     with col_c:
-        search_expenses = st.checkbox("المصروفات", value=True, key=f"{PFX}gs_expenses")
-        search_entries = st.checkbox("القيود اليومية", value=True, key=f"{PFX}gs_entries")
+        search_expenses = st.checkbox("المصروفات", value=True, key="gs_expenses")
+        search_entries = st.checkbox("القيود اليومية", value=True, key="gs_entries")
 
 db = SessionLocal()
 

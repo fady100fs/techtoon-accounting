@@ -24,17 +24,10 @@ from services import (
     import_categories_from_file
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
-from form_manager import clear_form, show_clear_hint
 from code_search import CodeSearch, FormState
 
 # ✅ Cache Layer
 from cache_helpers import (
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "itm_"
-
     get_items_with_stock,
     get_stock_map,
     invalidate_all,
@@ -126,8 +119,6 @@ def add_kit_components(db, kit_id, components):
 # الصفحة
 # ==========================================
 st.title("📦 إدارة الأصناف")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 msg = st.session_state.pop("_items_flash", None)
@@ -143,7 +134,7 @@ SECTIONS = [
     "📥 استيراد وتصدير الأصناف",
     "🗂️ استيراد وتصدير التصنيفات",
 ]
-section = st.radio("القسم", SECTIONS, horizontal=True, key=f"{PFX}items_section",
+section = st.radio("القسم", SECTIONS, horizontal=True, key="items_section",
                    label_visibility="collapsed")
 st.markdown("---")
 
@@ -235,7 +226,6 @@ if section == SECTIONS[0]:
                         fs.reset()
                     except Exception:
                         pass
-                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
 
     with col2:
@@ -293,7 +283,7 @@ if section == SECTIONS[1]:
         with col_p2:
             page_num = st.number_input(
                 "صفحة:", min_value=1, max_value=total_pages,
-                value=1, step=1, key=f"{PFX}items_page_num"
+                value=1, step=1, key="items_page_num"
             )
 
         start = (page_num - 1) * PAGE_SIZE
@@ -321,11 +311,11 @@ if section == SECTIONS[1]:
         if total_pages > 1:
             col_prev, col_next = st.columns(2)
             with col_prev:
-                if st.button("⬅️ السابق", disabled=(page_num <= 1), key=f"{PFX}items_prev"):
+                if st.button("⬅️ السابق", disabled=(page_num <= 1), key="items_prev"):
                     st.session_state["items_page_num"] = page_num - 1
                     st.rerun()
             with col_next:
-                if st.button("التالي ➡️", disabled=(page_num >= total_pages), key=f"{PFX}items_next"):
+                if st.button("التالي ➡️", disabled=(page_num >= total_pages), key="items_next"):
                     st.session_state["items_page_num"] = page_num + 1
                     st.rerun()
 
@@ -580,7 +570,7 @@ if section == SECTIONS[2]:
                 st.error(f"خطأ: {e}")
 
     with col2:
-        uploaded_file = st.file_uploader("اختر ملف:", type=['xlsx', 'csv'], key=f"{PFX}upload_items")
+        uploaded_file = st.file_uploader("اختر ملف:", type=['xlsx', 'csv'], key="upload_items")
 
         if uploaded_file:
             with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
@@ -596,7 +586,6 @@ if section == SECTIONS[2]:
                             st.write(f"- {error}")
                     invalidate_all()   # ✅
                     queue_state_updates(delete_keys=("upload_items",))
-                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
                 except Exception as e:
                     st.error(f"خطأ: {e}")
@@ -626,7 +615,7 @@ if section == SECTIONS[3]:
     st.markdown("---")
     st.subheader("📥 استيراد التصنيفات")
 
-    uploaded_file = st.file_uploader("اختر ملف التصنيفات:", type=['xlsx', 'csv'], key=f"{PFX}upload_categories")
+    uploaded_file = st.file_uploader("اختر ملف التصنيفات:", type=['xlsx', 'csv'], key="upload_categories")
 
     if uploaded_file:
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
@@ -639,7 +628,6 @@ if section == SECTIONS[3]:
                 st.success(f"✅ تم استيراد {count} تصنيف!")
                 invalidate_all()   # ✅
                 queue_state_updates(delete_keys=("upload_categories",))
-                clear_form(PFX)  # ✅ تفريغ الحقول
                 st.rerun()
             except Exception as e:
                 st.error(f"خطأ: {e}")

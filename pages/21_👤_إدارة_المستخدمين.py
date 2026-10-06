@@ -15,13 +15,6 @@ import models
 from models import User, UserRole
 from auth import hash_password, verify_password, create_user, get_user_permissions
 from auth_required import require_login, get_current_user_id, get_current_user_name, check_permission
-from form_manager import clear_form, show_clear_hint
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "users_"
-
 
 # التحقق من تسجيل الدخول والصلاحية
 current_user = require_login()
@@ -36,8 +29,6 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="إدارة المستخدمين", page_icon="👤", layout="wide")
 st.title("👤 إدارة المستخدمين والصلاحيات")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 
 st.info(f" المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
@@ -70,13 +61,13 @@ with tab1:
     col1, col2 = st.columns(2)
     
     with col1:
-        username = st.text_input("اسم المستخدم:", key=f"{PFX}new_username_input")
-        full_name = st.text_input("الاسم الكامل:", key=f"{PFX}new_fullname_input")
-        email = st.text_input("البريد الإلكتروني (اختياري):", key=f"{PFX}new_email_input")
+        username = st.text_input("اسم المستخدم:", key="new_username_input")
+        full_name = st.text_input("الاسم الكامل:", key="new_fullname_input")
+        email = st.text_input("البريد الإلكتروني (اختياري):", key="new_email_input")
     
     with col2:
-        password = st.text_input("كلمة المرور:", type="password", key=f"{PFX}new_password_input")
-        confirm_password = st.text_input("تأكيد كلمة المرور:", type="password", key=f"{PFX}new_confirm_input")
+        password = st.text_input("كلمة المرور:", type="password", key="new_password_input")
+        confirm_password = st.text_input("تأكيد كلمة المرور:", type="password", key="new_confirm_input")
         
         role = st.selectbox(
             "الدور الوظيفي:",
@@ -139,7 +130,6 @@ with tab1:
                     
                     st.success(f"✅ تم إنشاء المستخدم '{full_name}' بنجاح!")
                     st.balloons()
-                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
             except Exception as e:
                 st.error(f" خطأ: {e}")
@@ -210,7 +200,6 @@ with tab2:
                             
                             db.commit()
                             st.success(f"✅ تم تحديث بيانات '{new_full_name}' بنجاح!")
-                            clear_form(PFX)  # ✅ تفريغ الحقول
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")
@@ -226,7 +215,6 @@ with tab2:
                                 db.delete(selected_user)
                                 db.commit()
                                 st.success(f"✅ تم حذف المستخدم '{selected_user.full_name}' بنجاح!")
-                                clear_form(PFX)  # ✅ تفريغ الحقول
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ خطأ: {e}")

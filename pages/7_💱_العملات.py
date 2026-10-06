@@ -12,19 +12,10 @@ import pandas as pd
 from database import SessionLocal
 import models
 from auth_required import require_login
-from form_manager import clear_form, show_clear_hint
 current_user = require_login()
 st.set_page_config(page_title="إدارة العملات", page_icon="💱", layout="wide")
 st.title("💱 إدارة العملات")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 from keyboard_nav import enable_enter_navigation, add_enter_hint
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "cur_"
-
 
 # تفعيل التنقل بـ Enter
 enable_enter_navigation()
@@ -64,7 +55,6 @@ with tab1:
                     db.add(new_currency)
                     db.commit()
                     st.success(f"تم إضافة العملة '{name}' بنجاح!")
-                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
             except Exception as e:
                 st.error(f"خطأ: {e}")
@@ -116,7 +106,6 @@ with tab2:
                     selected_currency.is_default = new_is_default
                     db.commit()
                     st.success("تم تحديث العملة بنجاح!")
-                    clear_form(PFX)  # ✅ تفريغ الحقول
                     st.rerun()
             
             with col2:
@@ -125,7 +114,6 @@ with tab2:
                         db.delete(selected_currency)
                         db.commit()
                         st.success("تم حذف العملة بنجاح!")
-                        clear_form(PFX)  # ✅ تفريغ الحقول
                         st.rerun()
     else:
         st.info("لا توجد عملات.")

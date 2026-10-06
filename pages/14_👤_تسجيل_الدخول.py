@@ -12,21 +12,12 @@ st.set_page_config(page_title="حسابي", page_icon="👤", layout="wide")
 
 from session_auth import logout_user
 from sidebar import render_sidebar, role_label
-from form_manager import clear_form, show_clear_hint
-
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لكل مفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
-PFX = "acct_"
-
 
 render_sidebar()  # يحوّل لشاشة الدخول إن لم يكن مسجلاً
 
 user = st.session_state.current_user
 
 st.title("👤 حسابي")
-
-show_clear_hint()  # 💡 الحقول ستُفرَّغ تلقائياً بعد كل عملية
 st.success(f"مرحباً **{user['full_name']}**!")
 
 st.markdown("---")
@@ -48,5 +39,4 @@ st.markdown("---")
 
 if st.button("🚪 تسجيل الخروج", type="primary"):
     logout_user()
-    clear_form(PFX)  # ✅ تفريغ الحقول
     st.rerun()
