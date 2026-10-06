@@ -15,6 +15,7 @@ import models
 from models import CashBox, CashBoxType, CashTransfer
 from services import create_cash_box, get_cash_box_balance, transfer_between_cash_boxes
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -22,7 +23,15 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="الخزائن", page_icon="🏦", layout="wide")
 st.title("🏦 إدارة الخزائن والحسابات البنكية")
+show_clear_hint()   # ✅ تلميح
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
+
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لمفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "box_"
+
 
 db = SessionLocal()
 
@@ -97,37 +106,37 @@ with tab1:
 # ==========================================
 with tab2:
     st.subheader("➕ إضافة خزينة جديدة")
-    st.caption("💡 بعد الحفظ، الحقول هتتفرّغ تلقائيًا.")
 
     box_name = st.text_input(
         "اسم الخزينة:",
         placeholder="مثال: الخزينة الرئيسية، بنك الأهلي...",
-        key="new_box_name",
+        key=f"{PFX}new_name",   # ✅
     )
     box_code = st.text_input(
         "كود الخزينة:",
         placeholder="مثال: CB001, BANK01...",
-        key="new_box_code",
+        key=f"{PFX}new_code",   # ✅
     )
 
     box_type = st.selectbox(
         "نوع الخزينة:",
         options=[t.value for t in CashBoxType],
-        key="new_box_type",
+        key=f"{PFX}new_type",   # ✅
     )
 
     responsible_person = st.text_input(
         "الشخص المسؤول (اختياري):",
         placeholder="اسم أمين الصندوق...",
-        key="new_box_responsible",
+        key=f"{PFX}new_responsible",   # ✅
     )
     max_limit = st.number_input(
         "الحد الأقصى للرصيد (اختياري):",
-        min_value=0.0, step=1000.0, key="new_box_max",
+        min_value=0.0, step=1000.0, key=f"{PFX}new_max",   # ✅
     )
-    notes = st.text_area("ملاحظات (اختياري):", key="new_box_notes")
+    notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}new_notes")   # ✅
 
-    if st.button("💾 إنشاء الخزينة", type="primary", use_container_width=True):
+    if st.button("💾 إنشاء الخزينة", type="primary", use_container_width=True,
+                 key=f"{PFX}new_save"):
         if not box_name.strip() or not box_code.strip():
             st.error("❌ يرجى إدخال اسم وكود الخزينة.")
         else:
@@ -172,19 +181,8 @@ with tab2:
                 st.success(f"✅ تم إنشاء الخزينة '{box_name}'!")
                 st.balloons()
 
-                queue_state_updates(
-                    delete_keys=(
-                        "new_box_name", "new_box_code", "new_box_responsible",
-                        "new_box_max", "new_box_notes",
-                    ),
-                    set_values={
-                        "new_box_name": "",
-                        "new_box_code": "",
-                        "new_box_responsible": "",
-                        "new_box_max": 0.0,
-                        "new_box_notes": "",
-                    },
-                )
+                # ✅ تفريغ كل حقول النموذج
+                clear_form(PFX)
                 st.rerun()
             except Exception as e:
                 db.rollback()
@@ -196,7 +194,6 @@ with tab2:
 # ==========================================
 with tab3:
     st.subheader("🔄 تحويل مبلغ بين خزينتين")
-    st.caption("💡 بعد التحويل، الحقول هتتفرّغ تلقائيًا.")
 
     cash_boxes = db.query(CashBox).filter(CashBox.is_active == True).all()
 
@@ -211,7 +208,7 @@ with tab3:
                 "من خزينة:",
                 options=list(box_options.keys()),
                 format_func=lambda x: box_options[x],
-                key="from_box",
+                key=f"{PFX}tr_from",   # ✅
             )
             from_balance = get_cash_box_balance(from_box_id)
             st.info(f"💰 الرصيد: {from_balance:,.2f} ج.م")
@@ -221,18 +218,19 @@ with tab3:
                 "إلى خزينة:",
                 options=list(box_options.keys()),
                 format_func=lambda x: box_options[x],
-                key="to_box",
+                key=f"{PFX}tr_to",   # ✅
             )
             to_balance = get_cash_box_balance(to_box_id)
             st.info(f"💰 الرصيد: {to_balance:,.2f} ج.م")
 
         transfer_amount = st.number_input(
             "مبلغ التحويل:", min_value=0.01, step=100.0,
-            format="%.2f", key="transfer_amount",
+            format="%.2f", key=f"{PFX}tr_amount",   # ✅
         )
-        transfer_notes = st.text_area("ملاحظات (اختياري):", key="transfer_notes")
+        transfer_notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}tr_notes")   # ✅
 
-        if st.button("🔄 تنفيذ التحويل", type="primary", use_container_width=True):
+        if st.button("🔄 تنفيذ التحويل", type="primary", use_container_width=True,
+                     key=f"{PFX}tr_save"):
             if from_box_id == to_box_id:
                 st.error("❌ لا يمكن التحويل بين نفس الخزينة.")
             elif transfer_amount <= 0:
@@ -251,16 +249,8 @@ with tab3:
                     st.success(f"✅ تم التحويل: {transfer_amount:,.2f} ج.م")
                     st.balloons()
 
-                    queue_state_updates(
-                        delete_keys=(
-                            "from_box", "to_box", "transfer_amount",
-                            "transfer_notes",
-                        ),
-                        set_values={
-                            "transfer_amount": 0.01,
-                            "transfer_notes": "",
-                        },
-                    )
+                    # ✅ تفريغ كل حقول النموذج
+                    clear_form(PFX)
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
@@ -284,7 +274,7 @@ with tab4:
             "اختر خزينة:",
             options=list(box_options.keys()),
             format_func=lambda x: box_options[x],
-            key="select_box_edit",
+            key=f"{PFX}edit_select",   # ✅
         )
 
         if selected_box_id:
@@ -313,27 +303,34 @@ with tab4:
                 # ===== التعديل =====
                 with col_edit:
                     st.markdown("#### ✏️ تعديل البيانات")
-                    with st.form(f"edit_box_form_{selected_box_id}"):
-                        new_name = st.text_input("الاسم:",
-                                                  value=selected_box.name)
+                    with st.form(f"{PFX}edit_form_{selected_box_id}"):
+                        new_name = st.text_input(
+                            "الاسم:",
+                            value=selected_box.name,
+                            key=f"{PFX}edit_name_{selected_box_id}",
+                        )
                         new_responsible = st.text_input(
                             "المسؤول:",
                             value=selected_box.responsible_person or "",
+                            key=f"{PFX}edit_resp_{selected_box_id}",
                         )
                         new_max_limit = st.number_input(
                             "الحد الأقصى:",
                             min_value=0.0,
                             value=float(selected_box.max_limit or 0),
                             step=1000.0,
+                            key=f"{PFX}edit_max_{selected_box_id}",
                         )
                         new_notes = st.text_area(
                             "ملاحظات:",
                             value=selected_box.notes or "",
                             height=80,
+                            key=f"{PFX}edit_notes_{selected_box_id}",
                         )
                         new_is_active = st.checkbox(
                             "خزينة نشطة",
                             value=selected_box.is_active,
+                            key=f"{PFX}edit_active_{selected_box_id}",
                         )
                         submitted = st.form_submit_button(
                             "💾 حفظ التعديلات", type="primary",
@@ -357,9 +354,9 @@ with tab4:
                                     account.name = new_name.strip()
                                 db.commit()
                                 st.success("✅ تم التعديل.")
-                                queue_state_updates(
-                                    delete_keys=("select_box_edit",)
-                                )
+
+                                # ✅ تفريغ كل مفاتيح التعديل
+                                clear_form(PFX)
                                 st.rerun()
                         except Exception as e:
                             db.rollback()
@@ -384,14 +381,12 @@ with tab4:
                     if selected_box.is_active:
                         if st.button("⛔ تعطيل الخزينة",
                                      use_container_width=True,
-                                     key=f"disable_box_{selected_box_id}"):
+                                     key=f"{PFX}disable_box_{selected_box_id}"):
                             try:
                                 selected_box.is_active = False
                                 db.commit()
                                 st.success("✅ تم التعطيل.")
-                                queue_state_updates(
-                                    delete_keys=("select_box_edit",)
-                                )
+                                clear_form(PFX)
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()
@@ -399,14 +394,12 @@ with tab4:
                     else:
                         if st.button("✅ تفعيل الخزينة",
                                      use_container_width=True,
-                                     key=f"enable_box_{selected_box_id}"):
+                                     key=f"{PFX}enable_box_{selected_box_id}"):
                             try:
                                 selected_box.is_active = True
                                 db.commit()
                                 st.success("✅ تم التفعيل.")
-                                queue_state_updates(
-                                    delete_keys=("select_box_edit",)
-                                )
+                                clear_form(PFX)
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()
@@ -414,7 +407,6 @@ with tab4:
 
                     st.markdown("---")
 
-                    # التحقق قبل الحذف
                     can_delete = True
                     reasons = []
                     if abs(current_balance) > 0.01:
@@ -436,14 +428,14 @@ with tab4:
                         st.warning("⚠️ الحذف نهائي!")
                         confirm = st.checkbox(
                             "✅ أؤكد الحذف",
-                            key=f"confirm_del_box_{selected_box_id}",
+                            key=f"{PFX}confirm_del_box_{selected_box_id}",
                         )
                         if st.button(
                             "🗑 حذف الخزينة",
                             type="secondary",
                             disabled=not confirm,
                             use_container_width=True,
-                            key=f"del_box_btn_{selected_box_id}",
+                            key=f"{PFX}del_box_btn_{selected_box_id}",
                         ):
                             try:
                                 if account:
@@ -451,9 +443,9 @@ with tab4:
                                 db.delete(selected_box)
                                 db.commit()
                                 st.success("✅ تم الحذف.")
-                                queue_state_updates(
-                                    delete_keys=("select_box_edit",)
-                                )
+
+                                # ✅ تفريغ كل مفاتيح الصفحة
+                                clear_form(PFX)
                                 st.rerun()
                             except Exception as e:
                                 db.rollback()
