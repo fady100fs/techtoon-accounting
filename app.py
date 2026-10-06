@@ -207,7 +207,6 @@ def render_login():
         elif not password or not password.strip():
             st.error("❌ يرجى إدخال كلمة المرور")
         else:
-            # ✅ فحص Rate Limiting
             allowed, seconds = check_rate_limit(username)
             if not allowed:
                 mins = seconds // 60
@@ -219,11 +218,11 @@ def render_login():
             else:
                 user_data, error = authenticate_user(username, password)
                 if user_data:
-                    clear_attempts(username)  # ✅ تصفير بعد النجاح
+                    clear_attempts(username)
                     login_user(user_data)
                     st.rerun()
                 else:
-                    record_failed_attempt(username)  # ✅ تسجيل فشل
+                    record_failed_attempt(username)
                     remaining = get_remaining_attempts(username)
                     if 0 < remaining <= 2:
                         st.warning(f"⚠️ باقي {remaining} محاولة قبل الحظر.")
@@ -277,7 +276,7 @@ def render_home(user):
     groups = visible_groups(user)
     st.markdown(HOME_CSS + _grid_css(groups), unsafe_allow_html=True)
 
-    col_hero, col_out = st.columns([6, 1])
+    col_hero, col_search, col_out = st.columns([5, 1, 1])
     with col_hero:
         st.markdown(
             f"""
@@ -292,8 +291,21 @@ def render_home(user):
             """,
             unsafe_allow_html=True,
         )
+    with col_search:
+        st.write("")
+        # ✅ زر البحث الموحد السريع
+        if st.button("🔍 بحث", use_container_width=True, key="home_global_search"):
+            # ابحث عن صفحة البحث الموحد
+            from pathlib import Path as _Path
+            pages_dir = _Path(__file__).parent / "pages"
+            for f in pages_dir.glob("*البحث_الموحد*.py"):
+                st.switch_page(f"pages/{f.name}")
+                break
+            else:
+                st.info("صفحة البحث غير موجودة.")
     with col_out:
-        if st.button("🚪 خروج", key="home_logout"):
+        st.write("")
+        if st.button("🚪 خروج", key="home_logout", use_container_width=True):
             logout_user()
             st.rerun()
 
