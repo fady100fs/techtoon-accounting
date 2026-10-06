@@ -22,7 +22,7 @@ from services import (
 )
 from period_guard import check_period_open
 from auth_required import require_login, get_current_user_id, get_current_user_name
-from form_manager import clear_form, show_clear_hint   # ✅ جديد
+from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -30,17 +30,17 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="حركات الخزينة", page_icon="💹", layout="wide")
 st.title("💹 حركات الخزينة")
+show_clear_hint()   # ✅ تلميح
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
-db = SessionLocal()
 
 # ═══════════════════════════════════════════════════════════
-# ✅ بادئات المفاتيح لكل نموذج في هذه الصفحة
+# ✅ PFX: بادئة موحّدة لمفاتيح هذه الصفحة
 # ═══════════════════════════════════════════════════════════
-PFX_NEW    = "cm_new_"      # نموذج تسجيل حركة جديدة
-PFX_EDIT   = "cm_edit_"     # نموذج تعديل حركة
-PFX_FILTER = "cm_filter_"   # فلاتر البحث
-PFX_DEL    = "cm_del_"      # تأكيدات الحذف
+PFX = "cm_"
+
+
+db = SessionLocal()
 
 
 # ==========================================
@@ -306,7 +306,6 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ==========================================
 with tab1:
     st.subheader("➕ تسجيل حركة جديدة")
-    show_clear_hint()   # ✅ تلميح: الحقول ستُفرَّغ بعد الحفظ
 
     cash_boxes = db.query(CashBox).filter(CashBox.is_active == True).all()
     if not cash_boxes:
@@ -318,7 +317,7 @@ with tab1:
         "1️⃣ الخزينة:",
         options=list(box_opts.keys()),
         format_func=lambda x: box_opts[x],
-        key=f"{PFX_NEW}box",   # ✅ prefix
+        key=f"{PFX}box",
     )
 
     st.markdown("### 2️⃣ نوع الحركة")
@@ -327,7 +326,7 @@ with tab1:
         ["in", "out"],
         format_func=lambda x: "💰 وارد (استلام نقدية)" if x == "in" else "💸 صادر (دفع نقدية)",
         horizontal=True,
-        key=f"{PFX_NEW}dir",   # ✅ prefix
+        key=f"{PFX}dir",
     )
 
     st.markdown("### 3️⃣ الحساب المقابل (سبب الحركة)")
@@ -337,7 +336,6 @@ with tab1:
         st.error("⚠️ لا توجد حسابات طرف مقابل!")
         st.stop()
 
-    # ⚠️ خاص: الاختيار عبر radio + زر — نستخدم مفاتيح بأسماء البادئة
     for group_name, accounts in counter_groups.items():
         with st.expander(f"{group_name} ({len(accounts)})", expanded=False):
             acc_opts = {a.id: f"{a.code} — {a.name}" for a in accounts}
@@ -345,13 +343,13 @@ with tab1:
                 f"اختر من {group_name}:",
                 options=list(acc_opts.keys()),
                 format_func=lambda x: acc_opts[x],
-                key=f"{PFX_NEW}acc_{group_name}",
+                key=f"{PFX}acc_{group_name}",
                 label_visibility="collapsed",
             )
-            if st.button(f"✔️ اختيار من {group_name}", key=f"{PFX_NEW}pick_{group_name}"):
-                st.session_state[f"{PFX_NEW}selected_account"] = picked
+            if st.button(f"✔️ اختيار من {group_name}", key=f"{PFX}pick_{group_name}"):
+                st.session_state[f"{PFX}selected_account"] = picked
 
-    selected_account_id = st.session_state.get(f"{PFX_NEW}selected_account")
+    selected_account_id = st.session_state.get(f"{PFX}selected_account")
     if selected_account_id:
         acc = db.query(Account).filter(Account.id == selected_account_id).first()
         if acc:
@@ -363,25 +361,29 @@ with tab1:
 
     col_d, col_t = st.columns(2)
     with col_d:
-        cm_date = st.date_input("التاريخ:", value=datetime.now().date(),
-                                key=f"{PFX_NEW}date")
+        cm_date = st.date_input(
+            "التاريخ:", value=datetime.now().date(),
+            key=f"{PFX}date",
+        )
     with col_t:
-        cm_time = st.time_input("الوقت:", value=datetime.now().time(),
-                                key=f"{PFX_NEW}time")
+        cm_time = st.time_input(
+            "الوقت:", value=datetime.now().time(),
+            key=f"{PFX}time",
+        )
 
     amount = st.number_input(
         "المبلغ (ج.م):", min_value=0.01, step=100.0, value=100.0,
-        format="%.2f", key=f"{PFX_NEW}amount",
+        format="%.2f", key=f"{PFX}amount",
     )
     description = st.text_area(
         "الوصف:", placeholder="مثال: نصيب الأخ في بضاعة أونلاين",
-        key=f"{PFX_NEW}desc",
+        key=f"{PFX}desc",
     )
-    ref_no = st.text_input("رقم المرجع (اختياري):", key=f"{PFX_NEW}ref")
-    notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX_NEW}notes", height=60)
+    ref_no = st.text_input("رقم المرجع (اختياري):", key=f"{PFX}ref")
+    notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}notes", height=60)
 
     if st.button("💾 حفظ الحركة", type="primary", use_container_width=True,
-                 key=f"{PFX_NEW}save"):
+                 key=f"{PFX}save"):
         if not selected_account_id:
             st.error("❌ اختر الحساب المقابل أولاً.")
         elif not description.strip():
@@ -435,9 +437,10 @@ with tab1:
 
                 direction_label = "وارد" if direction == "in" else "صادر"
                 st.success(f"✅ تم تسجيل حركة {direction_label} بمبلغ {amount:,.2f} ج.م")
+                st.balloons()
 
-                # ✅ المبدأ العام: تفريغ كل خانات النموذج
-                clear_form(PFX_NEW)
+                # ✅ تفريغ كل حقول النموذج
+                clear_form(PFX)
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -453,17 +456,17 @@ with tab2:
     with col_f1:
         filter_dir = st.selectbox(
             "الاتجاه:", ["الكل", "وارد فقط", "صادر فقط"],
-            key=f"{PFX_FILTER}dir",
+            key=f"{PFX}filter_dir",
         )
     with col_f2:
         start_filter = st.date_input(
             "من تاريخ:", value=datetime.now().replace(day=1).date(),
-            key=f"{PFX_FILTER}start",
+            key=f"{PFX}filter_start",
         )
     with col_f3:
         end_filter = st.date_input(
             "إلى تاريخ:", value=datetime.now().date(),
-            key=f"{PFX_FILTER}end",
+            key=f"{PFX}filter_end",
         )
 
     d = None
@@ -529,17 +532,17 @@ with tab3:
     with col_f1:
         edit_dir = st.selectbox(
             "الاتجاه:", ["الكل", "وارد فقط", "صادر فقط"],
-            key=f"{PFX_EDIT}filter_dir",
+            key=f"{PFX}ef_dir",
         )
     with col_f2:
         edit_start = st.date_input(
             "من تاريخ:", value=(datetime.now().replace(day=1)).date(),
-            key=f"{PFX_EDIT}filter_start",
+            key=f"{PFX}ef_start",
         )
     with col_f3:
         edit_end = st.date_input(
             "إلى تاريخ:", value=datetime.now().date(),
-            key=f"{PFX_EDIT}filter_end",
+            key=f"{PFX}ef_end",
         )
 
     d_edit = None
@@ -569,7 +572,7 @@ with tab3:
             "اختر الحركة (بالمسلسل):",
             options=list(m_opts.keys()),
             format_func=lambda x: m_opts[x],
-            key=f"{PFX_EDIT}select",
+            key=f"{PFX}edit_select",
         )
 
         if selected_m_id:
@@ -607,16 +610,13 @@ with tab3:
                     "لتغيير **الاتجاه** أو **الحساب المقابل** → احذف وأعد الإنشاء."
                 )
 
-                # ✅ مفتاح فريد لكل قيد يُعدَّل
-                edit_key_suffix = f"{entry.id}"
-
-                with st.form(f"{PFX_EDIT}form_{edit_key_suffix}"):
+                with st.form(f"{PFX}edit_form_{entry.id}"):
                     new_amount = st.number_input(
                         "المبلغ الجديد (ج.م):",
                         min_value=0.01,
                         value=float(det["amount"]),
                         step=100.0, format="%.2f",
-                        key=f"{PFX_EDIT}amount_{edit_key_suffix}",
+                        key=f"{PFX}edit_amount_{entry.id}",
                     )
 
                     col_d, col_t = st.columns(2)
@@ -624,20 +624,20 @@ with tab3:
                         new_date = st.date_input(
                             "التاريخ:",
                             value=entry.date.date() if entry.date else datetime.now().date(),
-                            key=f"{PFX_EDIT}date_{edit_key_suffix}",
+                            key=f"{PFX}edit_date_{entry.id}",
                         )
                     with col_t:
                         new_time = st.time_input(
                             "الوقت:",
                             value=entry.date.time() if entry.date else datetime.now().time(),
-                            key=f"{PFX_EDIT}time_{edit_key_suffix}",
+                            key=f"{PFX}edit_time_{entry.id}",
                         )
 
                     new_desc = st.text_area(
                         "الوصف:",
                         value=original_desc,
                         height=68,
-                        key=f"{PFX_EDIT}desc_{edit_key_suffix}",
+                        key=f"{PFX}edit_desc_{entry.id}",
                     )
 
                     new_notes = st.text_area(
@@ -645,7 +645,7 @@ with tab3:
                         value="",
                         height=68,
                         help="ستُضاف إلى نهاية الوصف بين [ ]",
-                        key=f"{PFX_EDIT}notes_{edit_key_suffix}",
+                        key=f"{PFX}edit_notes_{entry.id}",
                     )
 
                     submitted = st.form_submit_button(
@@ -669,8 +669,8 @@ with tab3:
                             )
                             st.success(f"✅ تم تحديث الحركة `{serial}` بنجاح!")
 
-                            # ✅ المبدأ: تفريغ كل خانات التعديل
-                            clear_form(PFX_EDIT)
+                            # ✅ تفريغ كل مفاتيح التعديل
+                            clear_form(PFX)
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")
@@ -683,21 +683,21 @@ with tab3:
                     st.error(f"⚠️ سيتم حذف الحركة `{serial}` نهائيًا مع قيودها المحاسبية.")
                     confirm = st.checkbox(
                         "✅ أؤكد الحذف النهائي",
-                        key=f"{PFX_DEL}confirm_{entry.id}",
+                        key=f"{PFX}confirm_del_{entry.id}",
                     )
                     if st.button(
                         "🗑 حذف الحركة",
                         type="secondary",
                         disabled=not confirm,
                         use_container_width=True,
-                        key=f"{PFX_DEL}btn_{entry.id}",
+                        key=f"{PFX}del_btn_{entry.id}",
                     ):
                         try:
                             _delete_movement(entry)
                             st.success(f"✅ تم حذف الحركة `{serial}`.")
 
-                            # ✅ المبدأ: تفريغ كل خانات التعديل والحذف
-                            clear_form(PFX_EDIT, PFX_DEL)
+                            # ✅ تفريغ كل مفاتيح الصفحة
+                            clear_form(PFX)
                             st.rerun()
                         except Exception as e:
                             db.rollback()
@@ -716,15 +716,15 @@ with tab4:
     with col1:
         rep_start = st.date_input(
             "من تاريخ:", value=datetime.now().replace(day=1).date(),
-            key="cm_rep_start",
+            key=f"{PFX}rep_start",
         )
     with col2:
         rep_end = st.date_input(
             "إلى تاريخ:", value=datetime.now().date(),
-            key="cm_rep_end",
+            key=f"{PFX}rep_end",
         )
 
-    if st.button("📊 عرض التقرير", type="primary", key="cm_show_report"):
+    if st.button("📊 عرض التقرير", type="primary", key=f"{PFX}show_report"):
         s = datetime.combine(rep_start, datetime.min.time())
         e = datetime.combine(rep_end, datetime.max.time())
 
