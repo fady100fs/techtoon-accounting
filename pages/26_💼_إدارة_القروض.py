@@ -20,6 +20,7 @@ from services import (
     calculate_loan_installments
 )
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -27,7 +28,15 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="إدارة القروض", page_icon="💼", layout="wide")
 st.title("💼 إدارة القروض والتمويل")
+show_clear_hint()   # ✅ تلميح
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
+
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لمفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "loan_"
+
 
 db = SessionLocal()
 
@@ -40,10 +49,10 @@ def _delete_loan(loan_id):
         if not loan:
             raise ValueError("القرض غير موجود")
 
-        # حذف الأقساط
-        db_local.query(LoanInstallment).filter(LoanInstallment.loan_id == loan_id).delete()
+        db_local.query(LoanInstallment).filter(
+            LoanInstallment.loan_id == loan_id
+        ).delete()
 
-        # حذف القيود المحاسبية المرتبطة
         je_ids = [r[0] for r in db_local.query(models.JournalEntry.id).filter(
             models.JournalEntry.reference_id == loan_id,
             models.JournalEntry.reference_type.in_(["loan", "loan_payment"]),
@@ -79,13 +88,12 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ==========================================
 with tab1:
     st.subheader("➕ إضافة قرض جديد")
-    st.caption("💡 بعد الحفظ، الحقول هتتفرّغ تلقائيًا.")
 
     loan_type = st.radio(
         "نوع القرض:",
         [LoanType.RECEIVED.value, LoanType.GIVEN.value],
         horizontal=True,
-        key="new_loan_type",
+        key=f"{PFX}new_type",   # ✅
     )
     actual_type = LoanType.RECEIVED if loan_type == LoanType.RECEIVED.value else LoanType.GIVEN
 
@@ -95,30 +103,34 @@ with tab1:
         borrower_name = st.text_input(
             "اسم المقترض/المُقرض:",
             placeholder="مثال: بنك الأهلي، محمد أحمد...",
-            key="new_loan_borrower",
+            key=f"{PFX}new_borrower",   # ✅
         )
         borrower_type = st.selectbox(
             "نوع المقترض:",
             ["bank (بنك)", "customer (عميل)", "employee (موظف)", "other (أخرى)"],
-            key="new_loan_borrower_type",
+            key=f"{PFX}new_borrower_type",   # ✅
         )
         principal_amount = st.number_input(
             "المبلغ الأصلي:",
             min_value=1000.0, step=10000.0, format="%.2f",
-            key="new_loan_principal",
+            key=f"{PFX}new_principal",   # ✅
         )
         annual_interest_rate = st.number_input(
             "نسبة الفائدة السنوية (%):",
             min_value=0.0, max_value=100.0, value=12.0, step=0.5,
-            format="%.2f", key="new_loan_rate",
+            format="%.2f", key=f"{PFX}new_rate",   # ✅
         )
 
     with col2:
-        loan_date = st.date_input("تاريخ القرض:", value=datetime.now().date(),
-                                  key="new_loan_date")
+        loan_date = st.date_input(
+            "تاريخ القرض:",
+            value=datetime.now().date(),
+            key=f"{PFX}new_date",   # ✅
+        )
         term_months = st.number_input(
-            "مدة القرض (أشهر):", min_value=1, max_value=360, value=12, step=1,
-            key="new_loan_term",
+            "مدة القرض (أشهر):",
+            min_value=1, max_value=360, value=12, step=1,
+            key=f"{PFX}new_term",   # ✅
         )
 
         if principal_amount > 0 and term_months > 0:
@@ -138,15 +150,16 @@ with tab1:
                 "الخزينة/الحساب:",
                 options=list(cash_box_dict.keys()),
                 format_func=lambda x: cash_box_dict[x],
-                key="new_loan_box",
+                key=f"{PFX}new_box",   # ✅
             )
         else:
             st.warning("⚠️ لا توجد خزائن متاحة!")
             selected_cash_box_id = None
 
-        notes = st.text_area("ملاحظات (اختياري):", key="new_loan_notes")
+        notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}new_notes")   # ✅
 
-    if st.button("💾 إنشاء القرض", type="primary", use_container_width=True):
+    if st.button("💾 إنشاء القرض", type="primary", use_container_width=True,
+                 key=f"{PFX}new_save"):
         if not borrower_name:
             st.error("❌ يرجى إدخال اسم المقترض/المُقرض")
         elif principal_amount <= 0:
@@ -171,21 +184,8 @@ with tab1:
                 st.success("✅ تم إنشاء القرض بنجاح!")
                 st.balloons()
 
-                # ✅ تفريغ كامل
-                queue_state_updates(
-                    delete_keys=(
-                        "new_loan_borrower", "new_loan_principal", "new_loan_rate",
-                        "new_loan_date", "new_loan_term", "new_loan_box", "new_loan_notes",
-                        "new_loan_borrower_type",
-                    ),
-                    set_values={
-                        "new_loan_borrower": "",
-                        "new_loan_principal": 1000.0,
-                        "new_loan_rate": 12.0,
-                        "new_loan_term": 12,
-                        "new_loan_notes": "",
-                    },
-                )
+                # ✅ تفريغ كل حقول النموذج
+                clear_form(PFX)
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
@@ -201,7 +201,7 @@ with tab2:
         "تصفية حسب النوع:",
         ["الكل", LoanType.RECEIVED.value, LoanType.GIVEN.value],
         horizontal=True,
-        key="filter_loan_type",
+        key=f"{PFX}filter_type",   # ✅
     )
 
     if loan_type_filter == "الكل":
@@ -254,13 +254,12 @@ with tab2:
                      for l in loans if l.id == x),
                     str(x),
                 ),
-                key="sel_loan_edit",
+                key=f"{PFX}edit_select",   # ✅
             )
 
             if selected_loan_id:
                 selected_loan = next((l for l in loans if l.id == selected_loan_id), None)
 
-                # تفاصيل مختصرة
                 st.markdown(f"### 📄 تفاصيل القرض: **{selected_loan.loan_number}**")
                 c1, c2, c3 = st.columns(3)
                 with c1:
@@ -271,15 +270,17 @@ with tab2:
                     st.metric("المتبقي", f"{selected_loan.remaining_amount:,.2f}")
 
                 # ---------- التعديل ----------
-                with st.form(f"edit_loan_form_{selected_loan_id}"):
+                with st.form(f"{PFX}edit_form_{selected_loan_id}"):
                     new_borrower = st.text_input(
                         "اسم المقترض/المُقرض:",
                         value=selected_loan.borrower_name,
+                        key=f"{PFX}edit_borrower_{selected_loan_id}",   # ✅
                     )
                     new_notes = st.text_area(
                         "ملاحظات:",
                         value=selected_loan.notes or "",
                         height=80,
+                        key=f"{PFX}edit_notes_{selected_loan_id}",   # ✅
                     )
                     edit_submitted = st.form_submit_button(
                         "💾 حفظ التعديلات", type="primary",
@@ -294,7 +295,9 @@ with tab2:
                             selected_loan.notes = new_notes.strip() or None
                             db.commit()
                             st.success("✅ تم التعديل بنجاح!")
-                            queue_state_updates(delete_keys=("sel_loan_edit",))
+
+                            # ✅ تفريغ كل مفاتيح التعديل
+                            clear_form(PFX)
                             st.rerun()
                     except Exception as e:
                         db.rollback()
@@ -317,19 +320,21 @@ with tab2:
                 )
                 confirm_del = st.checkbox(
                     "✅ أؤكد الحذف النهائي",
-                    key=f"confirm_del_loan_{selected_loan_id}",
+                    key=f"{PFX}confirm_del_{selected_loan_id}",   # ✅
                 )
                 if st.button(
                     "🗑 حذف القرض",
                     type="secondary",
                     disabled=not confirm_del,
                     use_container_width=True,
-                    key=f"del_loan_btn_{selected_loan_id}",
+                    key=f"{PFX}del_btn_{selected_loan_id}",   # ✅
                 ):
                     try:
                         _delete_loan(selected_loan_id)
                         st.success("✅ تم حذف القرض بنجاح!")
-                        queue_state_updates(delete_keys=("sel_loan_edit",))
+
+                        # ✅ تفريغ كل مفاتيح الصفحة
+                        clear_form(PFX)
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ خطأ: {e}")
@@ -362,7 +367,7 @@ with tab3:
                 (f"{l.loan_number} - {l.borrower_name} ({l.loan_type.value})"
                  for l in active_loans if l.id == x), str(x),
             ),
-            key="pay_loan_select",
+            key=f"{PFX}pay_loan_select",   # ✅
         )
 
         if selected_loan_id:
@@ -386,7 +391,6 @@ with tab3:
             ).order_by(LoanInstallment.installment_number).all()
 
             if pending_installments:
-                # قائمة الخزائن
                 cash_boxes = db.query(CashBox).filter(CashBox.is_active == True).all()
                 box_opts = {b.id: f"{b.name} ({b.code})" for b in cash_boxes}
 
@@ -401,7 +405,8 @@ with tab3:
                                 f"مستحق في {inst.due_date.strftime('%Y-%m-%d')} - "
                                 f"مبلغ: {inst.total_amount:,.2f} ج.م")
 
-                    with st.expander(f"💳 سداد القسط #{inst.installment_number}", expanded=False):
+                    with st.expander(f"💳 سداد القسط #{inst.installment_number}",
+                                     expanded=False):
                         if not cash_boxes:
                             st.error("لا توجد خزائن!")
                         else:
@@ -409,11 +414,13 @@ with tab3:
                                 "الخزينة:",
                                 options=list(box_opts.keys()),
                                 format_func=lambda x: box_opts[x],
-                                key=f"cb_{inst.id}",
+                                key=f"{PFX}cb_{inst.id}",   # ✅
                             )
-                            if st.button("✅ تأكيد السداد",
-                                         key=f"confirm_pay_{inst.id}",
-                                         type="primary"):
+                            if st.button(
+                                "✅ تأكيد السداد",
+                                key=f"{PFX}confirm_pay_{inst.id}",   # ✅
+                                type="primary",
+                            ):
                                 try:
                                     pay_loan_installment(
                                         installment_id=inst.id,
@@ -422,11 +429,9 @@ with tab3:
                                         created_by=current_user_id,
                                     )
                                     st.success(f"✅ تم سداد القسط #{inst.installment_number}!")
-                                    queue_state_updates(
-                                        delete_keys=(f"cb_{inst.id}",
-                                                     f"confirm_pay_{inst.id}",
-                                                     "pay_loan_select"),
-                                    )
+
+                                    # ✅ تفريغ كل حقول السداد
+                                    clear_form(PFX)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"❌ {e}")
@@ -472,7 +477,7 @@ with tab4:
             format_func=lambda x: next(
                 (f"{l.loan_number} - {l.borrower_name}" for l in all_loans if l.id == x),
                 str(x)),
-            key="schedule_loan_select",
+            key=f"{PFX}schedule_select",   # ✅
         )
         if sel_id:
             schedule_data = get_loan_schedule(sel_id)
