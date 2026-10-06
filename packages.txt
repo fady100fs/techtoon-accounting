@@ -1,0 +1,37 @@
+# 📁 مجلد الخطوط
+
+هذا المجلد يُستخدم لتخزين خطوط عربية لتقارير PDF.
+
+## الخطوط الموصى بها
+
+البرنامج سيبحث عن الملفات التالية بالترتيب:
+
+1. `fonts/Amiri-Regular.ttf` — الخط الأميري (موصى به)
+2. `fonts/Cairo-Regular.ttf` — خط القاهرة
+3. `fonts/NotoSansArabic-Regular.ttf` — Noto Arabic
+
+## كيف تحصل على الخطوط؟
+
+### الخيار 1: تحميل من الإنترنت
+- **Amiri:** https://github.com/aliftype/amiri/releases
+- **Cairo:** https://fonts.google.com/specimen/Cairo
+- **Noto Arabic:** https://fonts.google.com/noto/specimen/Noto+Sans+Arabic
+
+حمّل الملف `.ttf` وضعه في هذا المجلد.
+
+### الخيار 2: من نظام Windows
+افتح `C:\Windows\Fonts` وابحث عن:
+- `arial.ttf` (يدعم العربية جزئياً)
+- `tahoma.ttf`
+- `segoeui.ttf`
+
+انسخ أحدهم إلى هذا المجلد.
+
+### الخيار 3: بدون خطوط
+البرنامج سيحاول استخدام خطوط النظام تلقائياً.
+إذا فشل، ستظهر رسالة توضيحية.
+
+## الملفات المدعومة
+
+- `.ttf` (TrueType)
+- `.otf` (OpenType)
