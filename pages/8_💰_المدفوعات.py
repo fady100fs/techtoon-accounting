@@ -18,6 +18,7 @@ from cache_helpers import (
     get_payments_index,
     invalidate_all,
 )
+from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -25,6 +26,7 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="المدفوعات", page_icon="💰", layout="wide")
 st.title("💰 المدفوعات والسداد")
+show_clear_hint()   # ✅ تلميح
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 try:
@@ -33,6 +35,13 @@ try:
     add_enter_hint()
 except Exception:
     pass
+
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لمفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "pay_"
+
 
 db = SessionLocal()
 
@@ -47,7 +56,6 @@ def _delete_payment_full(payment_id):
         if not pay:
             raise ValueError("الدفعة غير موجودة")
 
-        # ✅ فحص الفترة
         if pay.date:
             check_period_open(pay.date, entity="حذف دفعة")
 
@@ -83,23 +91,26 @@ tab1, tab2, tab3 = st.tabs([
 # ==========================================
 with tab1:
     st.subheader("➕ تسجيل دفعة جديدة")
-    st.caption("💡 بعد الحفظ، الحقول هتتفرّغ تلقائيًا.")
 
     col_date, col_time = st.columns(2)
     with col_date:
-        payment_date = st.date_input("التاريخ:",
-                                      value=datetime.now().date(),
-                                      key="new_pay_date")
+        payment_date = st.date_input(
+            "التاريخ:",
+            value=datetime.now().date(),
+            key=f"{PFX}date",   # ✅
+        )
     with col_time:
-        payment_time = st.time_input("الوقت:",
-                                      value=datetime.now().time(),
-                                      key="new_pay_time")
+        payment_time = st.time_input(
+            "الوقت:",
+            value=datetime.now().time(),
+            key=f"{PFX}time",   # ✅
+        )
 
     payment_type = st.radio(
         "نوع الدفعة:",
         ["receipt (قبض من عميل)", "payment (صرف لمورد)"],
         horizontal=True,
-        key="new_pay_type",
+        key=f"{PFX}type",   # ✅
     )
     actual_type = "receipt" if "receipt" in payment_type else "payment"
     type_ar = "قبض" if actual_type == "receipt" else "صرف"
@@ -122,24 +133,31 @@ with tab1:
         f"اختر {'العميل' if actual_type == 'receipt' else 'المورد'}:",
         options=list(party_dict.keys()),
         format_func=lambda x: party_dict[x],
-        key="new_pay_party",
+        key=f"{PFX}party",   # ✅
     )
 
-    amount = st.number_input("مبلغ الدفعة:", min_value=0.01, step=100.0,
-                              format="%.2f", key="new_pay_amount")
+    amount = st.number_input(
+        "مبلغ الدفعة:",
+        min_value=0.01, step=100.0,
+        format="%.2f",
+        key=f"{PFX}amount",   # ✅
+    )
 
     payment_method = st.selectbox(
         "طريقة الدفع:",
         ["cash (نقدي)", "bank_transfer (تحويل بنكي)", "check (شيك)"],
-        key="new_pay_method",
+        key=f"{PFX}method",   # ✅
     )
     actual_method = payment_method.split(" ")[0]
 
     reference_number = st.text_input(
         "رقم المرجع (رقم الشيك/التحويل) - اختياري",
-        key="new_pay_ref",
+        key=f"{PFX}ref",   # ✅
     )
-    notes = st.text_area("ملاحظات - اختياري", key="new_pay_notes")
+    notes = st.text_area(
+        "ملاحظات - اختياري",
+        key=f"{PFX}notes",   # ✅
+    )
 
     currencies = db.query(models.Currency).all()
     currency_options = {c.id: f"{c.name} ({c.symbol})" for c in currencies}
@@ -147,10 +165,11 @@ with tab1:
         "العملة:",
         options=list(currency_options.keys()),
         format_func=lambda x: currency_options[x],
-        key="new_pay_currency",
+        key=f"{PFX}currency",   # ✅
     )
 
-    if st.button("💾 حفظ الدفعة", type="primary", use_container_width=True):
+    if st.button("💾 حفظ الدفعة", type="primary", use_container_width=True,
+                 key=f"{PFX}save"):
         if not selected_party_id or amount <= 0:
             st.error("❌ يرجى اختيار العميل/المورد وإدخال مبلغ صحيح.")
         else:
@@ -170,25 +189,15 @@ with tab1:
                 st.success(f"✅ تم تسجيل دفعة {type_ar} بمبلغ {amount:,.2f}!")
                 st.balloons()
 
-                queue_state_updates(
-                    delete_keys=(
-                        "new_pay_date", "new_pay_time", "new_pay_party",
-                        "new_pay_amount", "new_pay_method", "new_pay_ref",
-                        "new_pay_notes", "new_pay_currency",
-                    ),
-                    set_values={
-                        "new_pay_amount": 0.01,
-                        "new_pay_ref": "",
-                        "new_pay_notes": "",
-                    },
-                )
+                # ✅ تفريغ كل حقول النموذج
+                clear_form(PFX)
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
 
 
 # ==========================================
-# التبويب 2: سجل المدفوعات (مع cache)
+# التبويب 2: سجل المدفوعات
 # ==========================================
 with tab2:
     st.subheader("📋 سجل المدفوعات")
@@ -269,7 +278,7 @@ with tab3:
                 f"{payment_lookup[x]['amount']:,.2f} — "
                 f"{payment_lookup[x]['party_name']}"
             ),
-            key="sel_payment_edit",
+            key=f"{PFX}edit_select",   # ✅
         )
 
         if selected_payment_id:
@@ -306,12 +315,13 @@ with tab3:
             # ===== التعديل =====
             with col_edit:
                 st.markdown("#### ✏️ تعديل الدفعة")
-                with st.form(f"edit_pay_form_{selected_payment_id}"):
+                with st.form(f"{PFX}edit_form_{selected_payment_id}"):
                     new_amount = st.number_input(
                         "المبلغ الجديد:",
                         min_value=0.01,
                         value=float(sel_pay.amount or 0.01),
                         step=100.0, format="%.2f",
+                        key=f"{PFX}edit_amount_{selected_payment_id}",
                     )
                     methods_list = ["cash", "bank_transfer", "check"]
                     current_idx = (methods_list.index(sel_pay.payment_method)
@@ -320,15 +330,18 @@ with tab3:
                         "طريقة الدفع:",
                         methods_list,
                         index=current_idx,
+                        key=f"{PFX}edit_method_{selected_payment_id}",
                     )
                     new_ref = st.text_input(
                         "رقم المرجع:",
                         value=sel_pay.reference_number or "",
+                        key=f"{PFX}edit_ref_{selected_payment_id}",
                     )
                     new_notes = st.text_area(
                         "ملاحظات:",
                         value=sel_pay.notes or "",
                         height=80,
+                        key=f"{PFX}edit_notes_{selected_payment_id}",
                     )
                     submitted = st.form_submit_button(
                         "💾 حفظ التعديلات", type="primary",
@@ -336,7 +349,6 @@ with tab3:
 
                 if submitted:
                     try:
-                        # ✅ فحص الفترة
                         if sel_pay.date:
                             check_period_open(sel_pay.date, entity="تعديل دفعة")
 
@@ -393,7 +405,9 @@ with tab3:
                         db.commit()
                         invalidate_all()
                         st.success("✅ تم التعديل بنجاح!")
-                        queue_state_updates(delete_keys=("sel_payment_edit",))
+
+                        # ✅ تفريغ كل مفاتيح التعديل + الاختيار
+                        clear_form(PFX)
                         st.rerun()
                     except Exception as e:
                         db.rollback()
@@ -405,20 +419,22 @@ with tab3:
                 st.warning("⚠️ سيتم حذف الدفعة + القيد المحاسبي المرتبط.")
                 confirm = st.checkbox(
                     "✅ أؤكد الحذف النهائي",
-                    key=f"confirm_del_pay_{selected_payment_id}",
+                    key=f"{PFX}confirm_del_{selected_payment_id}",
                 )
                 if st.button(
                     "🗑 حذف الدفعة",
                     type="secondary",
                     disabled=not confirm,
                     use_container_width=True,
-                    key=f"del_pay_btn_{selected_payment_id}",
+                    key=f"{PFX}del_btn_{selected_payment_id}",
                 ):
                     try:
                         _delete_payment_full(selected_payment_id)
                         invalidate_all()
                         st.success("✅ تم الحذف.")
-                        queue_state_updates(delete_keys=("sel_payment_edit",))
+
+                        # ✅ تفريغ كل مفاتيح الصفحة
+                        clear_form(PFX)
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ خطأ: {e}")
