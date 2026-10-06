@@ -3719,3 +3719,53 @@ def get_expense_category_usage(category_id):
     finally:
         db.close()
 
+# ==========================================
+# 26. المسلسل الرقمي الموحّد للحركات (جديد)
+# ==========================================
+# البادئات المستخدمة:
+#   CM  = حركة خزينة (Cash Movement)
+#   PAY = دفعة (Payment)
+#   TRF = تحويل بين الخزائن (Transfer)
+#   EXP = مصروف (Expense)
+#   INV = فاتورة (Invoice) — موجود مسبقاً
+#   LOAN = قرض — موجود مسبقاً
+#
+# الفكرة: نستخدم `id` الموجود في قاعدة البيانات كأساس للمسلسل.
+# لا نحتاج أي تعديل على قاعدة البيانات، ولا أعمدة جديدة.
+# ==========================================
+
+
+def movement_serial(prefix, id_value, digits=6):
+    """يبني مسلسلاً مقروءًا من id رقمي موجود في قاعدة البيانات."""
+    if id_value is None:
+        return f"{prefix}-?"
+    try:
+        return f"{prefix}-{int(id_value):0{digits}d}"
+    except (TypeError, ValueError):
+        return f"{prefix}-?"
+
+
+def parse_movement_serial(serial):
+    """يستخرج id الرقمي من مسلسل نصي."""
+    if not serial or "-" not in str(serial):
+        return None
+    try:
+        parts = str(serial).strip().split("-", 1)
+        if len(parts) != 2:
+            return None
+        prefix = parts[0].strip().upper()
+        id_part = parts[1].strip()
+        if not id_part.isdigit():
+            return None
+        return {"prefix": prefix, "id": int(id_part)}
+    except Exception:
+        return None
+
+
+def movement_serial_with_year(prefix, id_value, year=None, digits=6):
+    """نسخة اختيارية: مسلسل يشمل السنة."""
+    if year is None:
+        from datetime import datetime as _dt
+        year = _dt.now().year
+    return movement_serial(f"{prefix}-{year}", id_value, digits)
+
