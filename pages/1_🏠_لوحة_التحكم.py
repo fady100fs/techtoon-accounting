@@ -17,6 +17,12 @@ import models
 from models import ExpenseCategory, Expense, CashBox
 from auth_required import require_login, get_current_user_id, get_current_user_name
 
+# ✅ Cache Layer
+from cache_helpers import (
+    get_dashboard_kpis,
+    get_inventory_summary,
+)
+
 # التحقق من تسجيل الدخول
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -54,29 +60,13 @@ try:
     # ==========================================
     st.subheader("📊 مؤشرات الأداء الرئيسية")
 
-    today = datetime.now()
-    this_month_start = today.replace(day=1)
-
-    total_sales = db.query(func.sum(models.Invoice.net_amount)).filter(
-        models.Invoice.type == 'sale',
-        models.Invoice.status != 'cancelled'
-    ).scalar() or 0.0
-
-    monthly_sales = db.query(func.sum(models.Invoice.net_amount)).filter(
-        models.Invoice.type == 'sale',
-        models.Invoice.status != 'cancelled',
-        models.Invoice.date >= this_month_start
-    ).scalar() or 0.0
-
-    total_expenses = db.query(func.sum(Expense.amount)).scalar() or 0.0
-
-    total_invoices = db.query(models.Invoice).filter(
-        models.Invoice.status != 'cancelled'
-    ).count()
-
-    total_customers = db.query(models.Party).filter(
-        models.Party.type == 'customer'
-    ).count()
+    # ✅ استدعاء واحد مخزّن بدل 5 استعلامات
+    kpis = get_dashboard_kpis()
+    total_sales = kpis["total_sales"]
+    monthly_sales = kpis["monthly_sales"]
+    total_expenses = kpis["total_expenses"]
+    total_invoices = kpis["total_invoices"]
+    total_customers = kpis["total_customers"]
 
     col1, col2, col3, col4, col5 = st.columns(5)
 
@@ -142,7 +132,7 @@ try:
     with chart_tab1:
         st.markdown("### 📊 المبيعات الشهرية")
 
-        # ✅ إصلاح: نستخدم to_char + literal_column
+        # ✅ استخدام to_char بدل strftime (متوافق مع PostgreSQL)
         month_expr = func.to_char(models.Invoice.date, literal_column("'YYYY-MM'"))
 
         sales_by_month = db.query(
@@ -243,42 +233,25 @@ try:
     with chart_tab4:
         st.markdown("### 📦 حالة المخزون")
 
-        items = db.query(models.Item).filter(
-            models.Item.is_kit == False
-        ).all()
+        # ✅ استدعاء واحد مخزّن (بدل N استعلام)
+        summary = get_inventory_summary()
 
-        if items:
-            # ✅ استعلام واحد بدل N استعلام (تحسين أداء)
-            movements = db.query(
-                models.InventoryMovement.item_id,
-                models.InventoryMovement.type,
-                models.InventoryMovement.quantity,
-            ).all()
-            stock_map = {}
-            for iid, mtype, qty in movements:
-                q = float(qty or 0)
-                if iid not in stock_map:
-                    stock_map[iid] = 0.0
-                stock_map[iid] += q if mtype == 'in' else -q
-
-            low_stock_count = sum(
-                1 for item in items
-                if stock_map.get(item.id, 0.0) <= (item.min_stock or 0)
-            )
-
-            good_stock = len(items) - low_stock_count
-
+        if summary["total_items"] > 0:
             fig = go.Figure(data=[
                 go.Pie(
                     labels=['مخزون جيد', 'تحت الحد الأدنى'],
-                    values=[good_stock, low_stock_count],
+                    values=[summary["good_stock_count"], summary["low_stock_count"]],
                     marker_colors=['#11998e', '#f5576c']
                 )
             ])
             fig.update_layout(title='حالة المخزون')
             st.plotly_chart(fig, use_container_width=True)
 
-            st.info(f"📦 إجمالي الأصناف: {len(items)} | ⚠️ تحت الحد الأدنى: {low_stock_count}")
+            st.info(
+                f"📦 إجمالي الأصناف: {summary['total_items']} | "
+                f"⚠️ تحت الحد الأدنى: {summary['low_stock_count']} | "
+                f"💰 قيمة المخزون: {summary['total_value']:,.2f} ج.م"
+            )
         else:
             st.info("لا توجد أصناف في المخزون")
 
@@ -301,19 +274,28 @@ try:
         ).limit(5).all()
 
         if recent_invoices:
+            # ✅ استعلام واحد للعملاء (بدل N)
+            party_ids = [inv.party_id for inv in recent_invoices if inv.party_id]
+            parties_map = {}
+            if party_ids:
+                parties_map = {
+                    p.id: p.name for p in db.query(models.Party).filter(
+                        models.Party.id.in_(party_ids)
+                    ).all()
+                }
+
             data = []
             for inv in recent_invoices:
-                party = db.query(models.Party).filter(models.Party.id == inv.party_id).first()
                 data.append({
                     "رقم الفاتورة": inv.invoice_number,
-                    "التاريخ": inv.date.strftime("%Y-%m-%d %H:%M"),
+                    "التاريخ": inv.date.strftime("%Y-%m-%d %H:%M") if inv.date else "-",
                     "النوع": "بيع" if inv.type == 'sale' else "شراء",
-                    "العميل/المورد": party.name if party else "-",
+                    "العميل/المورد": parties_map.get(inv.party_id, "-"),
                     "المبلغ": f"{inv.net_amount:,.2f} ج.م",
                     "الحالة": inv.status
                 })
             df = pd.DataFrame(data)
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد فواتير")
 
@@ -323,18 +305,27 @@ try:
         ).limit(5).all()
 
         if recent_payments:
+            # ✅ استعلام واحد للعملاء
+            party_ids = [p.party_id for p in recent_payments if p.party_id]
+            parties_map = {}
+            if party_ids:
+                parties_map = {
+                    p.id: p.name for p in db.query(models.Party).filter(
+                        models.Party.id.in_(party_ids)
+                    ).all()
+                }
+
             data = []
             for pay in recent_payments:
-                party = db.query(models.Party).filter(models.Party.id == pay.party_id).first()
                 data.append({
-                    "التاريخ": pay.date.strftime("%Y-%m-%d %H:%M"),
+                    "التاريخ": pay.date.strftime("%Y-%m-%d %H:%M") if pay.date else "-",
                     "النوع": "قبض" if pay.payment_type == 'receipt' else "صرف",
-                    "العميل/المورد": party.name if party else "-",
+                    "العميل/المورد": parties_map.get(pay.party_id, "-"),
                     "المبلغ": f"{pay.amount:,.2f} ج.م",
                     "الطريقة": pay.payment_method
                 })
             df = pd.DataFrame(data)
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد مدفوعات")
 
@@ -344,17 +335,26 @@ try:
         ).limit(5).all()
 
         if recent_expenses:
+            # ✅ استعلام واحد للتصنيفات
+            cat_ids = [exp.category_id for exp in recent_expenses if exp.category_id]
+            cats_map = {}
+            if cat_ids:
+                cats_map = {
+                    c.id: c.name for c in db.query(ExpenseCategory).filter(
+                        ExpenseCategory.id.in_(cat_ids)
+                    ).all()
+                }
+
             data = []
             for exp in recent_expenses:
-                cat = db.query(ExpenseCategory).filter(ExpenseCategory.id == exp.category_id).first()
                 data.append({
-                    "التاريخ": exp.date.strftime("%Y-%m-%d %H:%M"),
-                    "التصنيف": cat.name if cat else "-",
+                    "التاريخ": exp.date.strftime("%Y-%m-%d %H:%M") if exp.date else "-",
+                    "التصنيف": cats_map.get(exp.category_id, "-"),
                     "المبلغ": f"{exp.amount:,.2f} ج.م",
                     "الوصف": exp.description
                 })
             df = pd.DataFrame(data)
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد مصروفات")
 

@@ -11,8 +11,15 @@ import pandas as pd
 from datetime import datetime
 from database import SessionLocal
 import models
-from services import create_payment
+from services import create_payment, movement_serial
 from auth_required import require_login, get_current_user_id, get_current_user_name
+
+# ✅ Cache Layer
+from cache_helpers import (
+    get_payments_index,
+    get_parties,
+    invalidate_all,
+)
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -42,7 +49,6 @@ def _delete_payment_full(payment_id):
         if not pay:
             raise ValueError("الدفعة غير موجودة")
 
-        # حذف القيد المحاسبي المرتبط
         ref_marker = pay.reference_number or str(pay.id)
         je = db_local.query(models.JournalEntry).filter(
             models.JournalEntry.reference_type == "payment",
@@ -158,10 +164,10 @@ with tab1:
                     currency_id=selected_currency_id,
                     payment_date=payment_datetime,
                 )
+                invalidate_all()   # ✅
                 st.success(f"✅ تم تسجيل دفعة {type_ar} بمبلغ {amount:,.2f}!")
                 st.balloons()
 
-                # ✅ تفريغ الحقول
                 queue_state_updates(
                     delete_keys=(
                         "new_pay_date", "new_pay_time", "new_pay_party",
@@ -180,35 +186,28 @@ with tab1:
 
 
 # ==========================================
-# التبويب 2: سجل المدفوعات
+# التبويب 2: سجل المدفوعات (مع cache)
 # ==========================================
 with tab2:
     st.subheader("📋 سجل المدفوعات")
 
-    payments = db.query(models.Payment).order_by(
-        models.Payment.date.desc()
-    ).all()
+    # ✅ استدعاء واحد مخزّن بدل N+1
+    payments_data = get_payments_index(limit=1000)
 
-    if payments:
-        # خرائط مساعدة
-        party_map = {p.id: p.name for p in db.query(models.Party).all()}
-        curr_map = {c.id: c.symbol for c in db.query(models.Currency).all()}
-        box_map = {b.id: b.name for b in db.query(models.CashBox).all()}
-
+    if payments_data:
         data = []
-        for idx, pay in enumerate(payments, start=1):
-            sym = curr_map.get(pay.currency_id, "ج.م")
+        for idx, pay in enumerate(payments_data, start=1):
             data.append({
-                "مسلسل": idx,
-                "ID": pay.id,
-                "التاريخ": pay.date.strftime("%Y-%m-%d %H:%M") if pay.date else "-",
-                "النوع": "قبض" if pay.payment_type == "receipt" else "صرف",
-                "العميل/المورد": party_map.get(pay.party_id, "غير محدد"),
-                "المبلغ": float(pay.amount or 0),
-                "العملة": sym,
-                "الطريقة": pay.payment_method or "-",
-                "المرجع": pay.reference_number or "-",
-                "الخزينة": box_map.get(pay.cash_box_id, "-"),
+                "المسلسل": movement_serial("PAY", pay["id"]),
+                "ID": pay["id"],
+                "التاريخ": pay["date"].strftime("%Y-%m-%d %H:%M") if pay["date"] else "-",
+                "النوع": "قبض" if pay["payment_type"] == "receipt" else "صرف",
+                "العميل/المورد": pay["party_name"],
+                "المبلغ": pay["amount"],
+                "العملة": pay["currency_symbol"],
+                "الطريقة": pay["payment_method"] or "-",
+                "المرجع": pay["reference_number"] or "-",
+                "الخزينة": pay["cash_box_name"],
             })
 
         df = pd.DataFrame(data)
@@ -217,12 +216,19 @@ with tab2:
             use_container_width=True,
             hide_index=True,
             column_config={
+                "المسلسل": st.column_config.TextColumn("المسلسل", width="small"),
                 "المبلغ": st.column_config.NumberColumn("المبلغ", format="%.2f"),
             },
         )
 
-        total_receipts = sum(p.amount for p in payments if p.payment_type == "receipt")
-        total_payments = sum(p.amount for p in payments if p.payment_type == "payment")
+        total_receipts = sum(
+            p["amount"] for p in payments_data
+            if p["payment_type"] == "receipt"
+        )
+        total_payments = sum(
+            p["amount"] for p in payments_data
+            if p["payment_type"] == "payment"
+        )
         net_cash = total_receipts - total_payments
 
         st.markdown("---")
@@ -245,30 +251,29 @@ with tab2:
 with tab3:
     st.subheader("⚙️ تعديل / حذف دفعة")
 
-    payments = db.query(models.Payment).order_by(
-        models.Payment.date.desc()
-    ).all()
+    # ✅ استخدام cache للقوائم
+    payments_data = get_payments_index(limit=1000)
 
-    if not payments:
+    if not payments_data:
         st.info("لا توجد مدفوعات للتعديل.")
     else:
-        payment_ids = [p.id for p in payments]
-        party_map = {p.id: p.name for p in db.query(models.Party).all()}
-        curr_map = {c.id: c.symbol for c in db.query(models.Currency).all()}
+        payment_ids = [p["id"] for p in payments_data]
+        payment_lookup = {p["id"]: p for p in payments_data}
 
         selected_payment_id = st.selectbox(
-            "اختر دفعة:",
+            "اختر دفعة (بالمسلسل):",
             options=payment_ids,
-            format_func=lambda x: next((
-                f"{p.date.strftime('%Y-%m-%d') if p.date else '?'} — "
-                f"{p.amount:,.2f} — "
-                f"{party_map.get(p.party_id, '?')}"
-                for p in payments if p.id == x
-            ), str(x)),
+            format_func=lambda x: (
+                f"{movement_serial('PAY', x)} — "
+                f"{payment_lookup[x]['date'].strftime('%Y-%m-%d') if payment_lookup[x]['date'] else '?'} — "
+                f"{payment_lookup[x]['amount']:,.2f} — "
+                f"{payment_lookup[x]['party_name']}"
+            ),
             key="sel_payment_edit",
         )
 
         if selected_payment_id:
+            # جلب الكائن الفعلي من db (ليس من cache — لأننا سنعدّل)
             sel_pay = db.query(models.Payment).filter(
                 models.Payment.id == selected_payment_id
             ).first()
@@ -280,7 +285,6 @@ with tab3:
             ).first()
             sym = sel_curr.symbol if sel_curr else "ج.م"
 
-            # ===== التفاصيل =====
             st.markdown("### 📄 تفاصيل الدفعة المحددة")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -333,7 +337,6 @@ with tab3:
 
                 if submitted:
                     try:
-                        # حذف القيد القديم
                         ref_marker = sel_pay.reference_number or str(sel_pay.id)
                         old_je = db.query(models.JournalEntry).filter(
                             models.JournalEntry.reference_type == "payment",
@@ -345,13 +348,11 @@ with tab3:
                             ).delete(synchronize_session=False)
                             db.delete(old_je)
 
-                        # تحديث الدفعة
                         sel_pay.amount = new_amount
                         sel_pay.payment_method = new_method
                         sel_pay.reference_number = new_ref.strip() or None
                         sel_pay.notes = new_notes.strip() or None
 
-                        # إنشاء قيد جديد
                         cash_acc = db.query(models.Account).filter(
                             models.Account.code == "1101"
                         ).first()
@@ -387,6 +388,7 @@ with tab3:
                             ))
 
                         db.commit()
+                        invalidate_all()   # ✅
                         st.success("✅ تم التعديل بنجاح!")
                         queue_state_updates(delete_keys=("sel_payment_edit",))
                         st.rerun()
@@ -411,6 +413,7 @@ with tab3:
                 ):
                     try:
                         _delete_payment_full(selected_payment_id)
+                        invalidate_all()   # ✅
                         st.success("✅ تم الحذف.")
                         queue_state_updates(delete_keys=("sel_payment_edit",))
                         st.rerun()

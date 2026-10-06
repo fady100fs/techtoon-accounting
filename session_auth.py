@@ -1,6 +1,7 @@
 # session_auth.py
 # تسجيل دخول دائم: يبقى المستخدم مسجلاً بعد Refresh (عبر Cookie + ملف جلسات)
 # يتطلب Streamlit 1.37 أو أحدث (st.context.cookies)
+# ✅ Rate Limiting: حماية من brute force
 import importlib
 import json
 import secrets
@@ -16,10 +17,17 @@ COOKIE_NAME = "techtoon_session"
 SESSION_DAYS = 7
 _STORE = Path(__file__).parent / ".sessions.json"
 
+# =========================================================
+# Rate Limiting — إعدادات
+# =========================================================
+_RATE_LIMIT_FILE = Path(__file__).parent / ".login_attempts.json"
+_MAX_ATTEMPTS = 5           # عدد المحاولات المسموحة
+_LOCKOUT_SECONDS = 300      # مدة الحظر (5 دقائق)
+_ATTEMPT_WINDOW = 900       # نافذة العد (15 دقيقة)
+
 
 # ---------------------------------------------------------
 # تحويل القيم الخاصة (Enum / datetime) من وإلى JSON
-# حتى يعود قاموس المستخدم بنفس شكله الأصلي بعد Refresh
 # ---------------------------------------------------------
 def _encode(obj):
     if isinstance(obj, Enum):
@@ -82,8 +90,113 @@ def _read_cookie():
         return None
 
 
+# =========================================================
+# Rate Limiting — التنفيذ
+# =========================================================
+def _load_attempts():
+    """يقرأ سجل المحاولات من الملف (مع تنظيف القديم)."""
+    try:
+        if _RATE_LIMIT_FILE.exists():
+            data = json.loads(_RATE_LIMIT_FILE.read_text(encoding="utf-8"))
+            now = time.time()
+            return {
+                k: v for k, v in data.items()
+                if isinstance(v, dict)
+                and now - v.get("first_attempt", 0) < _ATTEMPT_WINDOW
+            }
+    except Exception:
+        pass
+    return {}
+
+
+def _save_attempts(data):
+    """يحفظ سجل المحاولات."""
+    try:
+        _RATE_LIMIT_FILE.write_text(
+            json.dumps(data, ensure_ascii=False),
+            encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def check_rate_limit(identifier):
+    """يتحقق إذا كان المستخدم مسموحاً له بالمحاولة.
+
+    Returns:
+        tuple: (is_allowed: bool, seconds_remaining: int)
+    """
+    if not identifier:
+        return True, 0
+
+    data = _load_attempts()
+    key = str(identifier).strip().lower()
+    record = data.get(key)
+
+    if not record:
+        return True, 0
+
+    attempts = record.get("count", 0)
+    first = record.get("first_attempt", 0)
+    now = time.time()
+
+    if now - first >= _ATTEMPT_WINDOW:
+        return True, 0
+
+    if attempts >= _MAX_ATTEMPTS:
+        elapsed = now - first
+        remaining = int(_ATTEMPT_WINDOW - elapsed)
+        return False, max(remaining, 0)
+
+    return True, 0
+
+
+def record_failed_attempt(identifier):
+    """يسجل محاولة فاشلة."""
+    if not identifier:
+        return
+    data = _load_attempts()
+    key = str(identifier).strip().lower()
+    now = time.time()
+
+    if key in data:
+        record = data[key]
+        if now - record.get("first_attempt", 0) >= _ATTEMPT_WINDOW:
+            record = {"count": 1, "first_attempt": now, "last_attempt": now}
+        else:
+            record["count"] = record.get("count", 0) + 1
+            record["last_attempt"] = now
+    else:
+        record = {"count": 1, "first_attempt": now, "last_attempt": now}
+
+    data[key] = record
+    _save_attempts(data)
+
+
+def clear_attempts(identifier):
+    """يحذف سجل المحاولات بعد نجاح الدخول."""
+    if not identifier:
+        return
+    data = _load_attempts()
+    key = str(identifier).strip().lower()
+    data.pop(key, None)
+    _save_attempts(data)
+
+
+def get_remaining_attempts(identifier):
+    """يرجع عدد المحاولات المتبقية قبل الحظر."""
+    if not identifier:
+        return _MAX_ATTEMPTS
+    data = _load_attempts()
+    key = str(identifier).strip().lower()
+    record = data.get(key)
+    if not record:
+        return _MAX_ATTEMPTS
+    return max(0, _MAX_ATTEMPTS - record.get("count", 0))
+
+
 # ---------------------------------------------------------
-# الدوال العامة
+# الدوال العامة للجلسة
 # ---------------------------------------------------------
 def login_user(user):
     """استدعِها بعد نجاح التحقق من كلمة المرور."""
@@ -99,11 +212,11 @@ def login_user(user):
     st.session_state["_auth_token"] = token
 
     _set_cookie(token, SESSION_DAYS * 86400)
-    time.sleep(1)  # نمهل المتصفح ليحفظ الـ Cookie قبل أي إعادة تشغيل
+    time.sleep(1)
 
 
 def restore_session():
-    """تعيد المستخدم من الـ Cookie بعد Refresh. تُستدعى تلقائياً من render_sidebar."""
+    """تعيد المستخدم من الـ Cookie بعد Refresh."""
     if "current_user" in st.session_state:
         return True
 
@@ -130,5 +243,5 @@ def logout_user():
     st.session_state.pop("current_user", None)
     st.session_state.pop("_auth_token", None)
 
-    _set_cookie("", 0)  # max-age=0 يحذف الـ Cookie
+    _set_cookie("", 0)
     time.sleep(1)

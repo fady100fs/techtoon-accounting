@@ -88,7 +88,6 @@ def _delete_transfer(transfer_id):
         if not t:
             raise ValueError("الحركة غير موجودة")
 
-        # إرجاع الكمية من المخزن الهدف للمصدر
         to_stock = db_local.query(StockLevel).filter(
             StockLevel.warehouse_id == t.to_warehouse_id,
             StockLevel.item_id == t.item_id,
@@ -139,7 +138,6 @@ with tab1:
         "➕ إضافة مخزن", "📋 القائمة", "⚙️ تعديل/حذف",
     ])
 
-    # ============= إضافة =============
     with sub_tab1:
         st.markdown("### ➕ إضافة مخزن جديد")
         st.caption("💡 بعد الحفظ، الحقول هتتفرّغ تلقائيًا.")
@@ -186,7 +184,6 @@ with tab1:
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
 
-    # ============= القائمة =============
     with sub_tab2:
         st.markdown("### 📋 قائمة المخازن")
 
@@ -211,7 +208,6 @@ with tab1:
         else:
             st.info("لا توجد مخازن.")
 
-    # ============= تعديل/حذف =============
     with sub_tab3:
         st.markdown("### ⚙️ تعديل / حذف مخزن")
 
@@ -247,7 +243,6 @@ with tab1:
 
                 col_edit, col_del = st.columns(2)
 
-                # ----- تعديل -----
                 with col_edit:
                     st.markdown("#### ✏️ تعديل البيانات")
                     with st.form(f"edit_wh_form_{sel_wh_id}"):
@@ -283,7 +278,6 @@ with tab1:
                             db.rollback()
                             st.error(f"❌ خطأ: {e}")
 
-                # ----- حذف / تعطيل -----
                 with col_del:
                     st.markdown("#### 🗑 حذف / تعطيل")
 
@@ -370,12 +364,10 @@ with tab2:
             report = get_warehouse_stock_report(sel_wh_id)
 
             if report:
-                # إضافة مسلسل
                 for i, r in enumerate(report, start=1):
                     r["مسلسل"] = i
 
                 df = pd.DataFrame(report)
-                # نرتب الأعمدة
                 cols_order = ["مسلسل", "item_name", "barcode", "quantity",
                               "min_stock", "status"]
                 cols_present = [c for c in cols_order if c in df.columns]
@@ -402,7 +394,6 @@ with tab3:
 
     sub_t1, sub_t2 = st.tabs(["➕ تحويل جديد", "📋 سجل التحويلات"])
 
-    # ============ تحويل جديد ============
     with sub_t1:
         st.caption("💡 بعد التحويل، الحقول هتتفرّغ تلقائيًا.")
 
@@ -433,7 +424,7 @@ with tab3:
 
             items = db.query(models.Item).filter(
                 models.Item.is_kit == False
-            ).all()
+            ).order_by(models.Item.name).all()
             item_dict = {it.id: it.name for it in items}
 
             if not items:
@@ -484,7 +475,6 @@ with tab3:
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")
 
-    # ============ سجل التحويلات ============
     with sub_t2:
         st.markdown("### 📋 سجل التحويلات")
 
@@ -495,8 +485,17 @@ with tab3:
         if not transfers:
             st.info("لا توجد تحويلات.")
         else:
+            # ✅ استعلامات مجمّعة (بدل N+1)
             wh_map = {w.id: w.name for w in db.query(Warehouse).all()}
-            item_map = {it.id: it.name for it in db.query(models.Item).all()}
+
+            item_ids = list({t.item_id for t in transfers if t.item_id})
+            item_map = {}
+            if item_ids:
+                item_map = {
+                    it.id: it.name for it in db.query(models.Item).filter(
+                        models.Item.id.in_(item_ids)
+                    ).all()
+                }
 
             rows = []
             for idx, t in enumerate(transfers, start=1):
@@ -514,7 +513,6 @@ with tab3:
             st.dataframe(df.drop(columns=["ID"]), use_container_width=True,
                          hide_index=True)
 
-            # حذف تحويل
             if can_modify():
                 st.markdown("---")
                 st.markdown("#### 🗑 حذف تحويل")
@@ -581,10 +579,18 @@ with tab4:
             if stocks:
                 st.markdown("### 📝 أدخل الكميات الفعلية")
 
+                # ✅ استعلام واحد للأصناف
+                item_ids = [s.item_id for s in stocks]
+                items_map = {}
+                if item_ids:
+                    items_map = {
+                        it.id: it for it in db.query(models.Item).filter(
+                            models.Item.id.in_(item_ids)
+                        ).all()
+                    }
+
                 for idx, stock in enumerate(stocks, start=1):
-                    item = db.query(models.Item).filter(
-                        models.Item.id == stock.item_id
-                    ).first()
+                    item = items_map.get(stock.item_id)
                     if not item:
                         continue
 
@@ -631,36 +637,50 @@ with tab5:
     rt1, rt2 = st.tabs(["📊 تقرير شامل", "📋 سجل الجرد"])
 
     with rt1:
+        # ✅ استعلامات مجمّعة (بدل N+1)
         warehouses = db.query(Warehouse).filter(
             Warehouse.is_active == True
         ).all()
 
         if warehouses:
-            all_stocks = []
-            for wh in warehouses:
-                stocks = db.query(StockLevel).filter(
-                    StockLevel.warehouse_id == wh.id,
-                    StockLevel.quantity > 0,
-                ).all()
-                for stock in stocks:
-                    item = db.query(models.Item).filter(
-                        models.Item.id == stock.item_id
-                    ).first()
-                    if item:
-                        all_stocks.append({
-                            "المخزن": wh.name,
-                            "الصنف": item.name,
-                            "الباركود": item.barcode or "—",
-                            "الكمية": float(stock.quantity or 0),
-                            "الحد الأدنى": float(item.min_stock or 0),
-                            "الحالة": ("⚠️ منخفض"
-                                       if (stock.quantity or 0) <= (item.min_stock or 0)
-                                       else "✅ جيد"),
-                        })
+            wh_ids = [wh.id for wh in warehouses]
+            all_stocks = db.query(StockLevel).filter(
+                StockLevel.warehouse_id.in_(wh_ids),
+                StockLevel.quantity > 0
+            ).all()
 
-            if all_stocks:
-                df = pd.DataFrame(all_stocks)
+            wh_map = {wh.id: wh.name for wh in warehouses}
+
+            # ✅ استعلام واحد للأصناف
+            item_ids = list({s.item_id for s in all_stocks})
+            items_map = {}
+            if item_ids:
+                items_map = {
+                    it.id: it for it in db.query(models.Item).filter(
+                        models.Item.id.in_(item_ids)
+                    ).all()
+                }
+
+            rows = []
+            for stock in all_stocks:
+                item = items_map.get(stock.item_id)
+                if not item:
+                    continue
+                rows.append({
+                    "المخزن": wh_map.get(stock.warehouse_id, "—"),
+                    "الصنف": item.name,
+                    "الباركود": item.barcode or "—",
+                    "الكمية": float(stock.quantity or 0),
+                    "الحد الأدنى": float(item.min_stock or 0),
+                    "الحالة": ("⚠️ منخفض"
+                               if (stock.quantity or 0) <= (item.min_stock or 0)
+                               else "✅ جيد"),
+                })
+
+            if rows:
+                df = pd.DataFrame(rows)
                 st.dataframe(df, use_container_width=True, hide_index=True)
+                st.caption(f"📊 إجمالي: {len(rows)} سجل مخزون")
             else:
                 st.info("لا توجد بيانات.")
         else:
@@ -672,8 +692,17 @@ with tab5:
         ).limit(50).all()
 
         if counts:
+            # ✅ استعلامات مجمّعة
             wh_map = {w.id: w.name for w in db.query(Warehouse).all()}
-            item_map = {it.id: it.name for it in db.query(models.Item).all()}
+
+            item_ids = list({c.item_id for c in counts if c.item_id})
+            item_map = {}
+            if item_ids:
+                item_map = {
+                    it.id: it.name for it in db.query(models.Item).filter(
+                        models.Item.id.in_(item_ids)
+                    ).all()
+                }
 
             rows = []
             for idx, c in enumerate(counts, start=1):

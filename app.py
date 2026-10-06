@@ -17,22 +17,24 @@ from datetime import datetime
 from auth import authenticate_user, hash_password
 from models import UserRole, User
 from database import SessionLocal
-from session_auth import restore_session, login_user, logout_user
+from session_auth import (
+    restore_session, login_user, logout_user,
+    check_rate_limit, record_failed_attempt, clear_attempts,
+    get_remaining_attempts,
+)
 from sidebar import visible_groups, role_label
 
 # ==========================================================
 # إعدادات شكل المربعات
 # ==========================================================
-MAX_PER_ROW = 4  # أقصى عدد مربعات في الصف (يجب أن يكون من: 1 أو 2 أو 3 أو 4)
-GRID_COLS = 12   # الشبكة 12 عموداً: تقبل القسمة على 1 و2 و3 و4
+MAX_PER_ROW = 4
+GRID_COLS = 12
 
-# ألوان المربعات (تتكرر بالتتابع). غيّرها كما تشاء.
 PALETTE = [
     "#27ae60", "#2d9cdb", "#e04f39", "#0d3b66", "#9b2d5a", "#00897b",
     "#f2705f", "#16a085", "#8e44ad", "#2c7fb8", "#d35400", "#1e8449",
 ]
 
-# إخفاء القائمة الجانبية تماماً في هذه الشاشة
 NO_SIDEBAR_CSS = """
 <style>
     [data-testid="stSidebar"],
@@ -62,7 +64,6 @@ HOME_CSS = """
     }
     [data-testid="stHeaderActionElements"] { display: none !important; }
 
-    /* الترويسة */
     .hero { display: flex; align-items: center; gap: 18px; margin-bottom: 4px; }
     .hero-logo {
         width: 84px; height: 84px; border-radius: 14px; flex-shrink: 0;
@@ -76,21 +77,18 @@ HOME_CSS = """
 
     .grp-title { font-size: 1.05rem; font-weight: 600; opacity: .85; margin: 22px 0 8px; }
 
-    /* شبكة المجموعة: 12 عموداً مع رصّ كثيف يسدّ الفراغات */
     [class*="st-key-grp_"],
     [class*="st-key-grp_"] > [data-testid="stVerticalBlock"] {
         display: grid !important;
         grid-template-columns: repeat(12, 1fr);
         grid-auto-flow: dense;
-        grid-auto-rows: 128px;       /* ارتفاع ثابت للصف = ارتفاع المربع */
+        grid-auto-rows: 128px;
         align-items: stretch;
         column-gap: 6px !important;
-        row-gap: 6px !important;     /* المسافة بين السطور (ثابتة) */
+        row-gap: 6px !important;
     }
-    /* إن كان الصنف على الغلاف الخارجي فالداخلي يأخذ العرض كله */
     [class*="st-key-grp_"] > [data-testid="stVerticalBlock"] { grid-column: 1 / -1; }
 
-    /* كل خلية ومربع يملأ عرض خليته بالكامل (Streamlit يجعلها بعرض المحتوى افتراضياً) */
     [class*="st-key-grp_"] > *,
     [class*="st-key-grp_"] [data-testid="stElementContainer"],
     [class*="st-key-grp_"] [data-testid="element-container"],
@@ -102,7 +100,6 @@ HOME_CSS = """
         justify-self: stretch;
     }
 
-    /* المربع */
     [class*="st-key-grp_"] a {
         width: 100% !important;
         height: 128px;
@@ -198,7 +195,7 @@ def render_login():
                     db.close()
         return
 
-    # ---------- تسجيل الدخول ----------
+    # ---------- تسجيل الدخول مع Rate Limiting ----------
     with st.form("login_form", clear_on_submit=False):
         username = st.text_input("اسم المستخدم:", placeholder="أدخل اسم المستخدم")
         password = st.text_input("كلمة المرور:", type="password", placeholder="أدخل كلمة المرور")
@@ -210,23 +207,37 @@ def render_login():
         elif not password or not password.strip():
             st.error("❌ يرجى إدخال كلمة المرور")
         else:
-            user_data, error = authenticate_user(username, password)
-            if user_data:
-                login_user(user_data)  # يحفظ الجلسة + الـ Cookie
-                st.rerun()
+            # ✅ فحص Rate Limiting
+            allowed, seconds = check_rate_limit(username)
+            if not allowed:
+                mins = seconds // 60
+                secs = seconds % 60
+                st.error(
+                    f"🚫 تم تجاوز عدد المحاولات المسموحة. "
+                    f"حاول مرة أخرى بعد **{mins} دقيقة {secs} ثانية**."
+                )
             else:
-                st.error(f"❌ {error}")
+                user_data, error = authenticate_user(username, password)
+                if user_data:
+                    clear_attempts(username)  # ✅ تصفير بعد النجاح
+                    login_user(user_data)
+                    st.rerun()
+                else:
+                    record_failed_attempt(username)  # ✅ تسجيل فشل
+                    remaining = get_remaining_attempts(username)
+                    if 0 < remaining <= 2:
+                        st.warning(f"⚠️ باقي {remaining} محاولة قبل الحظر.")
+                    elif remaining == 0:
+                        st.error("🚫 تم استنفاد المحاولات المسموحة. انتظر 15 دقيقة.")
+                    st.error(f"❌ {error}")
 
 
 # ==========================================================
-# الصفحة الرئيسية: مربعات ملونة بأحجام متفاوتة بلا فراغات
+# الصفحة الرئيسية: مربعات ملونة
 # ==========================================================
 def _balanced_rows(items, max_cols=MAX_PER_ROW):
-    """يوزّع المربعات على صفوف متوازنة (لا يبقى مربع وحيد في صف أخير).
-    مثال (الحد الأقصى 4): 5 ← 3+2 ، 7 ← 4+3 ، 9 ← 3+3+3 ، 2 ← 2
-    """
     n = len(items)
-    rows = -(-n // max_cols)  # تقريب لأعلى
+    rows = -(-n // max_cols)
     base, extra = divmod(n, rows)
     result, i = [], 0
     for r in range(rows):
@@ -237,8 +248,7 @@ def _balanced_rows(items, max_cols=MAX_PER_ROW):
 
 
 def _grid_css(groups):
-    """يولّد قواعد CSS لعرض (span) ولون كل مربع حسب موضعه في مجموعته."""
-    prefixes = ["", ' > [data-testid="stVerticalBlock"]']  # يغطي اختلاف الإصدارات
+    prefixes = ["", ' > [data-testid="stVerticalBlock"]']
     rules = []
     color_i = 0
     for g, (_, items) in enumerate(groups):
@@ -259,7 +269,7 @@ def _grid_css(groups):
 def _tile(path, label, icon):
     try:
         st.page_link(path, label=label, icon=icon)
-    except Exception:  # أيقونة غير مقبولة → نضعها داخل النص
+    except Exception:
         st.page_link(path, label=f"{icon} {label}")
 
 
@@ -295,7 +305,7 @@ def render_home(user):
         st.markdown(f'<div class="grp-title">{group_name}</div>', unsafe_allow_html=True)
         try:
             box = st.container(key=f"grp_{g}")
-        except TypeError:  # إصدار قديم لا يدعم key
+        except TypeError:
             box = st.container()
         with box:
             for label, icon, path, _ in items:
@@ -307,7 +317,7 @@ def render_home(user):
 # ==========================================================
 st.markdown(NO_SIDEBAR_CSS, unsafe_allow_html=True)
 
-restore_session()  # استعادة المستخدم بعد Refresh
+restore_session()
 current = st.session_state.get("current_user")
 
 if not current:

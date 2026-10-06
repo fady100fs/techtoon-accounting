@@ -10,7 +10,6 @@ from session_auth import restore_session, logout_user
 
 PAGES_DIR = Path(__file__).parent / "pages"
 
-# احتياطي لإخفاء القائمة التلقائية (الأساس هو config.toml)
 HIDE_DEFAULT_NAV = """
 <style>
     [data-testid="stSidebarNav"],
@@ -23,11 +22,7 @@ HIDE_DEFAULT_NAV = """
 """
 
 # ==========================================================
-# الصلاحيات: من يستطيع فتح كل صفحة؟
-# الأدوار (كما في UserRole داخل models.py):
-#   ADMIN / ACCOUNTANT / SALESPERSON / VIEWER
-# للتعديل: غيّر المجموعة المقابلة للصفحة فقط.
-# صفحة غير مذكورة هنا = للمدير فقط (احتياط آمن).
+# الصلاحيات
 # ==========================================================
 ALL = {"ADMIN", "ACCOUNTANT", "SALESPERSON", "VIEWER"}
 ADMIN_ONLY = {"ADMIN"}
@@ -50,7 +45,7 @@ PAGE_ACCESS = {
     "الفواتير": SALES,
     "فهرس_الفواتير": ALL,
     "المدفوعات": MANAGEMENT,
-    "المصروفات": MANAGEMENT,        # ← search term للملف (22_💸_المصروفات.py)
+    "المصروفات": MANAGEMENT,
     "الخزائن": MANAGEMENT,
     # مخزون
     "إدارة_المخزون": MANAGEMENT,
@@ -72,9 +67,9 @@ PAGE_ACCESS = {
     "مركز_التذكيرات": ALL,
     # نظام
     "النسخ_الاحتياطي": MANAGEMENT,
+    "فحص_السلامة": MANAGEMENT,
 }
 
-# (اسم المجموعة, [(الاسم الظاهر, كلمة البحث في اسم الملف, الأيقونة)])
 GROUPS = [
     ("👤 الحساب", [
         ("حسابي", "تسجيل_الدخول", "👤"),
@@ -92,7 +87,7 @@ GROUPS = [
         ("الفواتير", "الفواتير", "🧾"),
         ("فهرس الفواتير", "فهرس_الفواتير", "📋"),
         ("المدفوعات", "المدفوعات", "💰"),
-        ("حركات الخزينة", "المصروفات", "💹"),    # ← الاسم الجديد (الملف لسه 22_💸_المصروفات.py)
+        ("حركات الخزينة", "المصروفات", "💹"),
         ("الخزائن", "الخزائن", "🏦"),
     ]),
     ("📦 مخزون", [
@@ -118,6 +113,7 @@ GROUPS = [
     ]),
     ("🛠️ نظام", [
         ("النسخ الاحتياطي", "النسخ_الاحتياطي", "💾"),
+        ("فحص السلامة", "فحص_السلامة", "🔍"),
     ]),
 ]
 
@@ -126,7 +122,6 @@ GROUPS = [
 # أدوات مساعدة
 # ==========================================================
 def _norm(text):
-    """يحذف الرقم البادئ والإيموجي من اسم الملف: '3_👥عملاء' -> 'عملاء'."""
     text = re.sub(r"^\d+_", "", text)
     text = re.sub(r"[^\w\s]", "", text)
     return text.strip()
@@ -149,7 +144,6 @@ def _find_page(term, index):
 
 
 def _role_name(user):
-    """اسم دور المستخدم بالحروف الكبيرة: ADMIN / ACCOUNTANT / ..."""
     role = user.get("role")
     name = getattr(role, "name", None)
     if name:
@@ -162,13 +156,11 @@ def _role_name(user):
 
 
 def role_label(user):
-    """الدور بالعربية للعرض (Enum -> 'مدير')."""
     role = user.get("role", "")
     return getattr(role, "value", role)
 
 
 def can_access(term, user):
-    """هل يحق لهذا المستخدم فتح الصفحة؟"""
     if not user:
         return False
     allowed = PAGE_ACCESS.get(term, ADMIN_ONLY)
@@ -176,11 +168,10 @@ def can_access(term, user):
 
 
 # ==========================================================
-# صلاحيات العمليات (منفصلة عن صلاحية فتح الصفحات)
+# صلاحيات العمليات
 # ==========================================================
 CREATE_ROLES = {"ADMIN", "ACCOUNTANT", "SALESPERSON"}
 MODIFY_ROLES = {"ADMIN"}
-
 MODIFY_WORDS = ("حذف", "تعديل", "delete", "edit", "🗑", "✏")
 
 
@@ -202,7 +193,7 @@ def require_modify(action="هذه العملية"):
 
 
 # ==========================================================
-# ✅ مسح بيانات الصفحة السابقة عند التنقل
+# إدارة حالة الصفحة
 # ==========================================================
 _PRESERVE_KEYS = ("current_user", "_active_page")
 
@@ -218,7 +209,6 @@ _EXTRA_CLEAR_KEYS = (
 
 
 def _reset_page_state_on_navigation(caller_path):
-    """عند التنقل لصفحة جديدة: امسح بيانات الصفحة السابقة."""
     current = str(caller_path)
     prev = st.session_state.get("_active_page")
 
@@ -229,7 +219,6 @@ def _reset_page_state_on_navigation(caller_path):
     if prev == current:
         return
 
-    # الصفحة اتغيرت → امسح
     for k in list(st.session_state.keys()):
         name = str(k)
         if name in _PRESERVE_KEYS:
@@ -244,11 +233,7 @@ def _reset_page_state_on_navigation(caller_path):
     st.session_state["_active_page"] = current
 
 
-# ==========================================================
-# تفريغ الخانات بعد الحفظ
-# ==========================================================
 def queue_state_updates(delete_prefixes=(), delete_keys=(), set_values=None):
-    """يؤجّل تعديل session_state إلى بداية التشغيل التالي."""
     pending = st.session_state.get("_pending_state") or {"prefixes": [], "keys": [], "set": {}}
     pending["prefixes"] = list(pending["prefixes"]) + list(delete_prefixes)
     pending["keys"] = list(pending["keys"]) + list(delete_keys)
@@ -282,7 +267,6 @@ def _is_modify_label(label):
 
 
 def _install_modify_guard():
-    """يعطّل أزرار التعديل/الحذف لغير المدير."""
     from streamlit.delta_generator import DeltaGenerator
 
     if getattr(DeltaGenerator.button, "_modify_guard", False):
@@ -312,7 +296,6 @@ def _install_modify_guard():
 
 
 def visible_groups(user):
-    """المجموعات والصفحات المسموحة للمستخدم فقط."""
     index = _build_index()
     result = []
     for group_name, pages in GROUPS:
@@ -337,7 +320,7 @@ def _term_for_file(path):
 
 
 # ==========================================================
-# القائمة الجانبية + الحارس
+# القائمة الجانبية
 # ==========================================================
 def render_sidebar():
     caller = Path(inspect.currentframe().f_back.f_code.co_filename).resolve()
