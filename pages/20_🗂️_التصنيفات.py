@@ -13,6 +13,7 @@ from database import SessionLocal
 import models
 from models import Category
 from auth_required import require_login, get_current_user_id, get_current_user_name
+from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -20,7 +21,15 @@ current_user_name = get_current_user_name()
 
 st.set_page_config(page_title="التصنيفات", page_icon="🗂️", layout="wide")
 st.title("🗂️ إدارة تصنيفات الأصناف")
+show_clear_hint()   # ✅ تلميح
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
+
+
+# ═══════════════════════════════════════════════════════════
+# ✅ PFX: بادئة موحّدة لمفاتيح هذه الصفحة
+# ═══════════════════════════════════════════════════════════
+PFX = "cat_"
+
 
 db = SessionLocal()
 
@@ -33,7 +42,6 @@ def _delete_category(cat_id):
         if not cat:
             raise ValueError("التصنيف غير موجود")
 
-        # فك ارتباط الأصناف بالتصنيف وكل تصنيفاته الفرعية
         sub_ids = [c.id for c in db_local.query(Category).filter(
             Category.parent_id == cat_id
         ).all()]
@@ -44,12 +52,10 @@ def _delete_category(cat_id):
                 models.Item.category_id == iid
             ).update({"category_id": None}, synchronize_session=False)
 
-        # حذف التصنيفات الفرعية
         db_local.query(Category).filter(Category.parent_id == cat_id).delete(
             synchronize_session=False
         )
 
-        # حذف التصنيف الرئيسي
         db_local.delete(cat)
         db_local.commit()
     except Exception:
@@ -67,17 +73,16 @@ tab1, tab2 = st.tabs(["➕ إضافة/تعديل تصنيف", "📋 قائمة �
 # ==========================================
 with tab1:
     st.subheader("➕ إضافة تصنيف جديد")
-    st.caption("💡 بعد الحفظ، الحقول هتتفرّغ تلقائيًا.")
 
     category_name = st.text_input(
         "اسم التصنيف:",
         placeholder="مثال: أدوات مكتبية، مواد غذائية...",
-        key="new_cat_name",
+        key=f"{PFX}new_name",   # ✅
     )
     category_description = st.text_area(
         "الوصف (اختياري):",
         placeholder="وصف مختصر...",
-        key="new_cat_desc",
+        key=f"{PFX}new_desc",   # ✅
         height=60,
     )
 
@@ -96,10 +101,11 @@ with tab1:
             (k for k, v in category_options.items() if v == x),
             "بدون",
         ),
-        key="new_cat_parent",
+        key=f"{PFX}new_parent",   # ✅
     )
 
-    if st.button("💾 إضافة التصنيف", type="primary", use_container_width=True):
+    if st.button("💾 إضافة التصنيف", type="primary", use_container_width=True,
+                 key=f"{PFX}new_save"):
         if not category_name.strip():
             st.error("❌ يرجى إدخال اسم التصنيف.")
         else:
@@ -122,16 +128,8 @@ with tab1:
                     st.success(f"✅ تم إضافة '{category_name}'!")
                     st.balloons()
 
-                    queue_state_updates(
-                        delete_keys=(
-                            "new_cat_name", "new_cat_desc", "new_cat_parent",
-                        ),
-                        set_values={
-                            "new_cat_name": "",
-                            "new_cat_desc": "",
-                            "new_cat_parent": None,
-                        },
-                    )
+                    # ✅ تفريغ كل حقول النموذج
+                    clear_form(PFX)
                     st.rerun()
             except Exception as e:
                 db.rollback()
@@ -147,20 +145,29 @@ with tab1:
             format_func=lambda x: next(
                 (c.name for c in all_categories if c.id == x), str(x)
             ),
-            key="sel_cat_edit",
+            key=f"{PFX}edit_select",   # ✅
         )
 
         if sel_id:
             sel_cat = next((c for c in all_categories if c.id == sel_id), None)
 
-            with st.form(f"edit_cat_form_{sel_id}"):
-                edit_name = st.text_input("الاسم:", value=sel_cat.name)
+            with st.form(f"{PFX}edit_form_{sel_id}"):
+                edit_name = st.text_input(
+                    "الاسم:",
+                    value=sel_cat.name,
+                    key=f"{PFX}edit_name_{sel_id}",   # ✅
+                )
                 edit_desc = st.text_area(
                     "الوصف:",
                     value=sel_cat.description or "",
                     height=80,
+                    key=f"{PFX}edit_desc_{sel_id}",   # ✅
                 )
-                edit_active = st.checkbox("نشط", value=bool(sel_cat.is_active))
+                edit_active = st.checkbox(
+                    "نشط",
+                    value=bool(sel_cat.is_active),
+                    key=f"{PFX}edit_active_{sel_id}",   # ✅
+                )
                 submitted = st.form_submit_button(
                     "💾 حفظ التعديلات", type="primary",
                 )
@@ -182,7 +189,9 @@ with tab1:
                             sel_cat.is_active = edit_active
                             db.commit()
                             st.success("✅ تم التعديل.")
-                            queue_state_updates(delete_keys=("sel_cat_edit",))
+
+                            # ✅ تفريغ كل مفاتيح التعديل
+                            clear_form(PFX)
                             st.rerun()
                 except Exception as e:
                     db.rollback()
@@ -200,7 +209,6 @@ with tab2:
     all_categories = db.query(Category).order_by(Category.name).all()
 
     if all_categories:
-        # جدول تفصيلي
         rows = []
         for idx, cat in enumerate(all_categories, start=1):
             parent = next(
@@ -239,7 +247,7 @@ with tab2:
                     (f"{c.name}" for c in all_categories if c.id == x),
                     str(x),
                 ),
-                key="del_cat_select",
+                key=f"{PFX}del_select",   # ✅
             )
 
             if del_id:
@@ -259,21 +267,21 @@ with tab2:
 
                 confirm = st.checkbox(
                     "✅ أؤكد الحذف",
-                    key=f"confirm_del_cat_{del_id}",
+                    key=f"{PFX}confirm_del_{del_id}",   # ✅
                 )
                 if st.button(
                     "🗑 حذف التصنيف",
                     type="secondary",
                     disabled=not confirm,
                     use_container_width=True,
-                    key=f"del_cat_btn_{del_id}",
+                    key=f"{PFX}del_btn_{del_id}",   # ✅
                 ):
                     try:
                         _delete_category(del_id)
                         st.success(f"✅ تم حذف '{del_cat.name}'.")
-                        queue_state_updates(
-                            delete_keys=("del_cat_select",)
-                        )
+
+                        # ✅ تفريغ كل مفاتيح الصفحة
+                        clear_form(PFX)
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ خطأ: {e}")
