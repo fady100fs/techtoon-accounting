@@ -628,7 +628,54 @@ class Budget(Base):
     __table_args__ = (
         UniqueConstraint('account_id', 'month', 'year', name='uq_budget_account_month_year'),
     )
+# ==================== 23. الفواتير المتكررة (جديد) ====================
+class RecurrenceFrequency(enum.Enum):
+    DAILY = "يومي"
+    WEEKLY = "أسبوعي"
+    BIWEEKLY = "كل أسبوعين"
+    MONTHLY = "شهري"
+    QUARTERLY = "ربع سنوي"
+    SEMIANNUAL = "نصف سنوي"
+    ANNUAL = "سنوي"
 
+
+class RecurringInvoiceTemplate(Base):
+    __tablename__ = 'recurring_invoice_templates'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    party_id = Column(Integer, ForeignKey('parties.id'), nullable=False)
+    invoice_type = Column(String(20), nullable=False)  # sale / purchase
+    frequency = Column(Enum(RecurrenceFrequency), nullable=False, default=RecurrenceFrequency.MONTHLY)
+    start_date = Column(DateTime, nullable=False)
+    end_date = Column(DateTime, nullable=True)
+    next_run_date = Column(DateTime, nullable=False)
+    last_run_date = Column(DateTime, nullable=True)
+    discount_percentage = Column(Float, default=0.0)
+    tax_rate = Column(Float, default=14.0)
+    notes = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    auto_post = Column(Boolean, default=False)  # True = نفّذ تلقائياً
+    runs_count = Column(Integer, default=0)
+    created_by = Column(Integer, ForeignKey('users.id'), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    party = relationship("Party")
+    lines = relationship("RecurringInvoiceLine", back_populates="template",
+                         cascade="all, delete-orphan")
+
+
+class RecurringInvoiceLine(Base):
+    __tablename__ = 'recurring_invoice_lines'
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey('recurring_invoice_templates.id'), nullable=False)
+    item_id = Column(Integer, ForeignKey('items.id'), nullable=False)
+    quantity = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+
+    template = relationship("RecurringInvoiceTemplate", back_populates="lines")
+    item = relationship("Item")
 # إنشاء جميع الجداول
 from database import engine
 Base.metadata.create_all(bind=engine)

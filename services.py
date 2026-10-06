@@ -5,6 +5,7 @@
 + Period Guard (فحص الفترات المحاسبية)
 + Journal Validation (فحص توازن القيود)
 + Movement Serial (المسلسل الرقمي الموحّد)
++ Recurring Invoices (الفواتير المتكررة)
 """
 
 from database import SessionLocal
@@ -15,7 +16,8 @@ from models import (
     WarehouseTransfer, StockCount, FixedAsset, DepreciationRecord, DepreciationMethod,
     Loan, LoanInstallment, LoanType, LoanStatus,
     Employee, SalaryRecord, EmploymentStatus, Budget,
-    AccountingPeriod, PeriodStatus
+    AccountingPeriod, PeriodStatus,
+    RecurringInvoiceTemplate, RecurringInvoiceLine, RecurrenceFrequency,
 )
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
@@ -92,7 +94,6 @@ def transfer_between_cash_boxes(from_cash_box_id, to_cash_box_id, amount, notes=
         if current_balance < amount:
             raise ValueError(f"رصيد الخزينة غير كافٍ! الرصيد الحالي: {current_balance:,.2f}")
 
-        # ✅ فحص الفترة
         check_period_open(datetime.now(), entity="تحويل بين الخزائن")
 
         transfer = CashTransfer(
@@ -112,7 +113,6 @@ def transfer_between_cash_boxes(from_cash_box_id, to_cash_box_id, amount, notes=
         db.add(models.JournalLine(entry_id=journal_entry.id, account_id=to_box.account_id, debit=amount, credit=0.0))
         db.add(models.JournalLine(entry_id=journal_entry.id, account_id=from_box.account_id, debit=0.0, credit=amount))
 
-        # ✅ فحص توازن القيد
         db.flush()
         validate_journal_entry(db, journal_entry.id)
 
@@ -209,7 +209,6 @@ def create_party_with_opening_balance(name, party_type, opening_balance=0.0,
                 db.add(models.JournalLine(entry_id=journal_entry.id, account_id=opening_account.id, debit=opening_balance, credit=0.0))
                 db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party_account.id, debit=0.0, credit=opening_balance))
 
-            # ✅ فحص توازن القيد
             db.flush()
             validate_journal_entry(db, journal_entry.id)
 
@@ -226,10 +225,7 @@ def create_party_with_opening_balance(name, party_type, opening_balance=0.0,
 # 2. دالة إنشاء فاتورة
 # ==========================================
 def _calc_item_cost_for_invoice(db, item):
-    """يحسب التكلفة الصحيحة لصنف عند إضافته للفاتورة.
-    - للصنف العادي: cost_price أو avg_cost_price
-    - للصنف المدمج: مجموع (كمية المكون × تكلفة المكون)
-    """
+    """يحسب التكلفة الصحيحة لصنف عند إضافته للفاتورة."""
     if not item:
         return 0.0
     if getattr(item, "is_kit", False):
@@ -254,7 +250,6 @@ def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_
                    invoice_date=None, discount_percentage=0.0, tax_rate=14.0, created_by=None):
     db = SessionLocal()
     try:
-        # ✅ فحص الفترة المحاسبية
         check_period_open(invoice_date or datetime.now(), entity="إنشاء فاتورة")
 
         period = get_period_for_date(invoice_date or datetime.now())
@@ -345,7 +340,6 @@ def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_
                         db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=cogs_account.id, debit=total_cost, credit=0.0))
                         db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=inventory_account.id, debit=0.0, credit=total_cost))
 
-                    # ✅ فحص توازن قيد COGS
                     db.flush()
                     validate_journal_entry(db, cogs_entry.id)
             else:
@@ -354,7 +348,6 @@ def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_
                     db.add(models.JournalLine(entry_id=journal_entry.id, account_id=inventory_account.id, debit=amount_after_discount, credit=0.0))
                 db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id, debit=0.0, credit=net_amount))
 
-            # ✅ فحص توازن القيد الأساسي
             db.flush()
             validate_journal_entry(db, journal_entry.id)
 
@@ -429,7 +422,6 @@ def create_payment(party_id, amount, payment_type, payment_method='cash',
                    payment_date=None, created_by=None, cash_box_id=1):
     db = SessionLocal()
     try:
-        # ✅ فحص الفترة المحاسبية
         check_period_open(payment_date or datetime.now(), entity="تسجيل دفعة")
 
         period = get_period_for_date(payment_date or datetime.now())
@@ -469,7 +461,6 @@ def create_payment(party_id, amount, payment_type, payment_method='cash',
             db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id, debit=amount, credit=0.0))
             db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cash_box.account_id, debit=0.0, credit=amount))
 
-        # ✅ فحص توازن القيد
         db.flush()
         validate_journal_entry(db, journal_entry.id)
 
@@ -794,10 +785,8 @@ def export_items_to_excel(output_path=None):
 
         items = db.query(models.Item).all()
 
-        # ✅ استعلام واحد للتصنيفات
         categories_map = {c.id: c.name for c in db.query(Category).all()}
 
-        # ✅ استعلام واحد للأرصدة
         rows = db.query(
             models.InventoryMovement.item_id,
             func.sum(
@@ -857,7 +846,6 @@ def export_categories_to_excel(output_path=None):
 
         categories = db.query(Category).all()
 
-        # ✅ خريطة الأب + عدّ الأصناف (استعلامان)
         cat_map = {c.id: c.name for c in categories}
         item_counts = db.query(
             models.Item.category_id, func.count(models.Item.id)
@@ -907,13 +895,9 @@ def export_parties_to_excel(party_type, output_path=None):
 
         parties = db.query(models.Party).filter(models.Party.type == party_type).all()
 
-        # ✅ استعلامات مجمّعة
         party_ids = [p.id for p in parties]
         accounts_map = {}
         if party_ids:
-            accounts_map = {
-                p.account_id: p for p in parties
-            }
             account_ids = list({p.account_id for p in parties if p.account_id})
             if account_ids:
                 accs = db.query(models.Account).filter(
@@ -1069,7 +1053,6 @@ def create_expense(category_id, amount, description, payment_method,
                    expense_date=None, created_by=None):
     db = SessionLocal()
     try:
-        # ✅ فحص الفترة المحاسبية
         check_period_open(expense_date or datetime.now(), entity="تسجيل مصروف")
 
         period = get_period_for_date(expense_date or datetime.now())
@@ -1107,7 +1090,6 @@ def create_expense(category_id, amount, description, payment_method,
         db.add(models.JournalLine(entry_id=journal_entry.id, account_id=category.account_id, debit=amount, credit=0.0))
         db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cash_box.account_id, debit=0.0, credit=amount))
 
-        # ✅ فحص توازن القيد
         db.flush()
         validate_journal_entry(db, journal_entry.id)
 
@@ -1148,7 +1130,6 @@ def delete_expense(expense_id):
         if not expense:
             raise ValueError("المصروف غير موجود!")
 
-        # ✅ فحص الفترة
         if expense.date:
             check_period_open(expense.date, entity="حذف مصروف")
 
@@ -1309,7 +1290,6 @@ def get_warehouse_stock_report(warehouse_id):
             StockLevel.quantity > 0
         ).all()
 
-        # ✅ استعلام واحد للأصناف
         item_ids = [s.item_id for s in stocks]
         items_map = {}
         if item_ids:
@@ -1394,7 +1374,6 @@ def run_annual_depreciation(asset_id, year, created_by=None):
         if asset.status != 'active':
             raise ValueError("الأصل غير نشط!")
 
-        # ✅ فحص الفترة (نهاية السنة)
         year_end = datetime(year, 12, 31)
         check_period_open(year_end, entity="تسجيل إهلاك سنوي")
 
@@ -1453,7 +1432,6 @@ def run_annual_depreciation(asset_id, year, created_by=None):
                 debit=0.0, credit=depreciation_amount
             ))
 
-            # ✅ فحص توازن القيد
             db.flush()
             validate_journal_entry(db, journal_entry.id)
 
@@ -1503,7 +1481,6 @@ def dispose_asset(asset_id, disposal_date, disposal_value, notes=None, created_b
         if not asset:
             raise ValueError("الأصل غير موجود!")
 
-        # ✅ فحص الفترة
         check_period_open(disposal_date, entity="التخلص من أصل")
 
         gain_loss = disposal_value - asset.net_book_value
@@ -1550,7 +1527,6 @@ def dispose_asset(asset_id, disposal_date, disposal_value, notes=None, created_b
 # ==========================================
 # 19. دوال تحليل الربحية المتقدم
 # ==========================================
-
 def get_profitability_by_item(start_date=None, end_date=None):
     db = SessionLocal()
     try:
@@ -1582,7 +1558,6 @@ def get_profitability_by_item(start_date=None, end_date=None):
             func.sum(models.InvoiceLine.total * (1 - models.InvoiceLine.cost_price / models.InvoiceLine.price)).desc()
         ).all()
 
-        # ✅ خريطة التصنيفات (استعلام واحد)
         cat_ids = list({r.category_id for r in results if r.category_id})
         cats_map = {}
         if cat_ids:
@@ -1959,7 +1934,6 @@ def get_profitability_summary(start_date=None, end_date=None):
 # ==========================================
 # 20. دوال إدارة القروض
 # ==========================================
-
 def calculate_loan_installments(principal_amount, annual_interest_rate, term_months):
     monthly_rate = annual_interest_rate / 100 / 12
 
@@ -2011,7 +1985,6 @@ def create_loan(
 ):
     db = SessionLocal()
     try:
-        # ✅ فحص الفترة
         check_period_open(loan_date, entity="إنشاء قرض")
 
         loan_count = db.query(Loan).count()
@@ -2114,7 +2087,6 @@ def create_loan(
                         credit=principal_amount
                     ))
 
-        # ✅ فحص توازن القيد
         db.flush()
         validate_journal_entry(db, journal_entry.id)
 
@@ -2143,7 +2115,6 @@ def pay_loan_installment(installment_id, payment_date=None, cash_box_id=None, no
         if payment_date is None:
             payment_date = datetime.now()
 
-        # ✅ فحص الفترة
         check_period_open(payment_date, entity="سداد قسط")
 
         installment.paid_amount = installment.total_amount
@@ -2237,7 +2208,6 @@ def pay_loan_installment(installment_id, payment_date=None, cash_box_id=None, no
                     credit=installment.interest_amount
                 ))
 
-        # ✅ فحص توازن القيد
         db.flush()
         validate_journal_entry(db, journal_entry.id)
 
@@ -2347,7 +2317,6 @@ def check_overdue_installments():
 # ==========================================
 # 21. دوال إدارة الموظفين والرواتب
 # ==========================================
-
 def create_employee(
     employee_code, full_name, job_title, hire_date, basic_salary,
     national_id=None, phone=None, email=None, address=None,
@@ -2451,7 +2420,6 @@ def process_monthly_salary(employee_id, month, year, overtime=0.0, bonus=0.0,
         if payment_date is None:
             payment_date = datetime.now()
 
-        # ✅ فحص الفترة
         check_period_open(payment_date, entity="صرف راتب")
 
         salary_record = SalaryRecord(
@@ -2578,7 +2546,6 @@ def get_monthly_payroll(month=None, year=None):
             SalaryRecord.year == year
         ).all()
 
-        # ✅ استعلام واحد للموظفين
         emp_ids = list({r.employee_id for r in records if r.employee_id})
         emp_map = {}
         if emp_ids:
@@ -2658,7 +2625,6 @@ def get_employees_summary():
 # ==========================================
 # 22. دوال التقارير المالية المتقدمة
 # ==========================================
-
 def get_income_statement(start_date, end_date):
     """قائمة الدخل"""
     db = SessionLocal()
@@ -2820,7 +2786,6 @@ def get_trial_balance(start_date, end_date):
     try:
         accounts = db.query(models.Account).all()
 
-        # ✅ استعلامات مجمّعة (بدل N+N)
         debit_agg = db.query(
             models.JournalLine.account_id,
             func.sum(models.JournalLine.debit).label('total')
@@ -3069,7 +3034,6 @@ def get_budget_vs_actual(month, year):
 # ==========================================
 # 23. دوال الإغلاق المحاسبي
 # ==========================================
-
 def create_accounting_period(period_name, start_date, end_date, is_fiscal_year=False, created_by=None):
     """إنشاء فترة محاسبية جديدة"""
     db = SessionLocal()
@@ -3390,7 +3354,6 @@ def check_period_integrity(period_id):
 # ==========================================
 # 24. دوال إدارة مراكز التكلفة
 # ==========================================
-
 def create_cost_center(code, name, description=None, manager_name=None,
                        parent_id=None, budget_limit=None, notes=None, created_by=None):
     """إنشاء مركز تكلفة جديد"""
@@ -3468,7 +3431,6 @@ def allocate_cost_to_center(cost_center_id, account_id, amount, description,
         if allocation_date is None:
             allocation_date = datetime.now()
 
-        # ✅ فحص الفترة
         check_period_open(allocation_date, entity="تخصيص تكلفة")
 
         transaction = CostCenterTransaction(
@@ -3509,7 +3471,6 @@ def allocate_cost_to_center(cost_center_id, account_id, amount, description,
                 credit=amount
             ))
 
-        # ✅ فحص توازن القيد
         db.flush()
         validate_journal_entry(db, journal_entry.id)
 
@@ -3854,15 +3815,7 @@ def movement_serial_with_year(prefix, id_value, year=None, digits=6):
 # 27. حارس توازن القيد
 # ==========================================
 def validate_journal_entry(db, entry_id):
-    """يتحقق أن مجموع debit = مجموع credit في القيد.
-
-    Args:
-        db: جلسة SQLAlchemy مفتوحة (نفس الجلسة التي ستحفظ).
-        entry_id: معرف القيد.
-
-    Raises:
-        ValueError: إذا كان القيد غير متوازن بأكثر من 0.01.
-    """
+    """يتحقق أن مجموع debit = مجموع credit في القيد."""
     lines = db.query(models.JournalLine).filter(
         models.JournalLine.entry_id == entry_id
     ).all()
@@ -3977,3 +3930,333 @@ def check_accounting_integrity():
         return report
     finally:
         db.close()
+
+
+# ==========================================
+# 28. دوال الفواتير المتكررة (جديد)
+# ==========================================
+def _calc_next_run_date(current_date, frequency):
+    """يحسب تاريخ التنفيذ التالي حسب التكرار."""
+    if frequency == RecurrenceFrequency.DAILY:
+        return current_date + timedelta(days=1)
+    elif frequency == RecurrenceFrequency.WEEKLY:
+        return current_date + timedelta(weeks=1)
+    elif frequency == RecurrenceFrequency.BIWEEKLY:
+        return current_date + timedelta(weeks=2)
+    elif frequency == RecurrenceFrequency.MONTHLY:
+        return current_date + relativedelta(months=1)
+    elif frequency == RecurrenceFrequency.QUARTERLY:
+        return current_date + relativedelta(months=3)
+    elif frequency == RecurrenceFrequency.SEMIANNUAL:
+        return current_date + relativedelta(months=6)
+    elif frequency == RecurrenceFrequency.ANNUAL:
+        return current_date + relativedelta(years=1)
+    return current_date + relativedelta(months=1)
+
+
+def create_recurring_template(name, party_id, invoice_type, frequency,
+                              start_date, lines, end_date=None,
+                              discount_percentage=0.0, tax_rate=14.0,
+                              notes=None, auto_post=False, created_by=None):
+    """ينشئ قالب فاتورة متكررة."""
+    db = SessionLocal()
+    try:
+        check_period_open(start_date, entity="إنشاء قالب فاتورة متكررة")
+
+        party = db.query(models.Party).filter(models.Party.id == party_id).first()
+        if not party:
+            raise ValueError("العميل/المورد غير موجود!")
+
+        if not lines or len(lines) == 0:
+            raise ValueError("يجب إضافة سطر واحد على الأقل")
+
+        template = RecurringInvoiceTemplate(
+            name=name.strip(),
+            party_id=party_id,
+            invoice_type=invoice_type,
+            frequency=frequency,
+            start_date=start_date,
+            end_date=end_date,
+            next_run_date=start_date,
+            discount_percentage=discount_percentage,
+            tax_rate=tax_rate,
+            notes=notes,
+            is_active=True,
+            auto_post=auto_post,
+            created_by=created_by,
+        )
+        db.add(template)
+        db.flush()
+
+        for ln in lines:
+            item = db.query(models.Item).filter(models.Item.name == ln['item_name']).first()
+            if not item:
+                raise ValueError(f"الصنف '{ln['item_name']}' غير موجود!")
+            db.add(RecurringInvoiceLine(
+                template_id=template.id,
+                item_id=item.id,
+                quantity=float(ln['quantity']),
+                price=float(ln['price']),
+            ))
+
+        db.commit()
+        return template
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def get_recurring_templates(only_active=False):
+    """يرجع كل القوالب مرتبة حسب تاريخ التنفيذ."""
+    db = SessionLocal()
+    try:
+        q = db.query(RecurringInvoiceTemplate)
+        if only_active:
+            q = q.filter(RecurringInvoiceTemplate.is_active == True)
+        return q.order_by(RecurringInvoiceTemplate.next_run_date).all()
+    finally:
+        db.close()
+
+
+def get_recurring_template(template_id):
+    """يرجع قالب واحد بالمعرف."""
+    db = SessionLocal()
+    try:
+        return db.query(RecurringInvoiceTemplate).filter(
+            RecurringInvoiceTemplate.id == template_id
+        ).first()
+    finally:
+        db.close()
+
+
+def get_recurring_template_lines(template_id):
+    """يرجع سطور القالب مع بيانات الأصناف."""
+    db = SessionLocal()
+    try:
+        lines = db.query(RecurringInvoiceLine).filter(
+            RecurringInvoiceLine.template_id == template_id
+        ).all()
+
+        if not lines:
+            return []
+
+        item_ids = [l.item_id for l in lines]
+        items_map = {
+            i.id: i for i in db.query(models.Item).filter(
+                models.Item.id.in_(item_ids)
+            ).all()
+        }
+
+        return [
+            {
+                "line_id": l.id,
+                "item_id": l.item_id,
+                "item_name": items_map[l.item_id].name if l.item_id in items_map else "—",
+                "quantity": float(l.quantity or 0),
+                "price": float(l.price or 0),
+            }
+            for l in lines
+        ]
+    finally:
+        db.close()
+
+
+def update_recurring_template(template_id, **kwargs):
+    """يحدّث قالب."""
+    db = SessionLocal()
+    try:
+        t = db.query(RecurringInvoiceTemplate).filter(
+            RecurringInvoiceTemplate.id == template_id
+        ).first()
+        if not t:
+            raise ValueError("القالب غير موجود!")
+
+        if 'name' in kwargs and kwargs['name']:
+            t.name = kwargs['name'].strip()
+        if 'frequency' in kwargs and kwargs['frequency']:
+            t.frequency = kwargs['frequency']
+        if 'discount_percentage' in kwargs:
+            t.discount_percentage = float(kwargs['discount_percentage'])
+        if 'tax_rate' in kwargs:
+            t.tax_rate = float(kwargs['tax_rate'])
+        if 'notes' in kwargs:
+            t.notes = kwargs['notes']
+        if 'is_active' in kwargs:
+            t.is_active = bool(kwargs['is_active'])
+        if 'auto_post' in kwargs:
+            t.auto_post = bool(kwargs['auto_post'])
+        if 'next_run_date' in kwargs and kwargs['next_run_date']:
+            t.next_run_date = kwargs['next_run_date']
+        if 'end_date' in kwargs:
+            t.end_date = kwargs['end_date']
+
+        db.commit()
+        return t
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def delete_recurring_template(template_id):
+    """يحذف قالب."""
+    db = SessionLocal()
+    try:
+        t = db.query(RecurringInvoiceTemplate).filter(
+            RecurringInvoiceTemplate.id == template_id
+        ).first()
+        if not t:
+            raise ValueError("القالب غير موجود!")
+        db.delete(t)
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def run_recurring_template(template_id, force=False, created_by=None):
+    """ينفّذ قالب: ينشئ فاتورة فعلية + يحدّث القالب."""
+    db = SessionLocal()
+    try:
+        t = db.query(RecurringInvoiceTemplate).filter(
+            RecurringInvoiceTemplate.id == template_id
+        ).first()
+        if not t:
+            raise ValueError("القالب غير موجود!")
+
+        if not t.is_active:
+            raise ValueError("القالب غير نشط!")
+
+        if not force and t.next_run_date and t.next_run_date > datetime.now():
+            raise ValueError(
+                f"موعد التنفيذ التالي: {t.next_run_date.strftime('%Y-%m-%d')}"
+            )
+
+        lines = db.query(RecurringInvoiceLine).filter(
+            RecurringInvoiceLine.template_id == t.id
+        ).all()
+
+        if not lines:
+            raise ValueError("القالب بلا سطور!")
+
+        items_data = []
+        for l in lines:
+            item = db.query(models.Item).filter(models.Item.id == l.item_id).first()
+            if not item:
+                continue
+            items_data.append({
+                'item_name': item.name,
+                'quantity': float(l.quantity),
+                'price': float(l.price),
+            })
+
+        if not items_data:
+            raise ValueError("لا توجد أصناف صالحة!")
+
+        # توليد رقم فاتورة فريد
+        invoice_count = db.query(models.Invoice).count()
+        new_invoice_number = f"INV-{invoice_count + 1:06d}"
+
+        while db.query(models.Invoice).filter(
+            models.Invoice.invoice_number == new_invoice_number
+        ).first():
+            invoice_count += 1
+            new_invoice_number = f"INV-{invoice_count + 1:06d}"
+
+        # إنشاء الفاتورة الفعلية
+        invoice = create_invoice(
+            party_id=t.party_id,
+            invoice_type=t.invoice_type,
+            items=items_data,
+            invoice_number=new_invoice_number,
+            discount_percentage=float(t.discount_percentage or 0),
+            tax_rate=float(t.tax_rate or 0),
+            created_by=created_by or t.created_by,
+        )
+
+        # تحديث القالب
+        t.last_run_date = datetime.now()
+        t.runs_count = (t.runs_count or 0) + 1
+        t.next_run_date = _calc_next_run_date(
+            t.next_run_date or datetime.now(), t.frequency
+        )
+
+        if t.end_date and t.next_run_date > t.end_date:
+            t.is_active = False
+
+        db.commit()
+
+        return {
+            'invoice': invoice,
+            'template': t,
+            'invoice_number': new_invoice_number,
+        }
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def get_due_recurring_templates():
+    """يرجع القوالب المستحقة التنفيذ الآن."""
+    db = SessionLocal()
+    try:
+        now = datetime.now()
+        return db.query(RecurringInvoiceTemplate).filter(
+            RecurringInvoiceTemplate.is_active == True,
+            RecurringInvoiceTemplate.next_run_date <= now,
+        ).order_by(RecurringInvoiceTemplate.next_run_date).all()
+    finally:
+        db.close()
+
+
+def process_due_recurring_templates(auto_run=False, created_by=None):
+    """يعالج القوالب المستحقة.
+
+    Args:
+        auto_run: True = نفّذ تلقائياً، False = أعرض فقط
+    """
+    due = get_due_recurring_templates()
+
+    if not auto_run:
+        return {
+            'total': len(due),
+            'processed': 0,
+            'failed': 0,
+            'results': [{'template': t, 'status': 'pending'} for t in due]
+        }
+
+    processed = 0
+    failed = 0
+    results = []
+
+    for t in due:
+        try:
+            r = run_recurring_template(t.id, force=True, created_by=created_by)
+            processed += 1
+            results.append({
+                'template': t,
+                'status': 'success',
+                'invoice_number': r['invoice_number'],
+            })
+        except Exception as e:
+            failed += 1
+            results.append({
+                'template': t,
+                'status': 'failed',
+                'error': str(e),
+            })
+
+    return {
+        'total': len(due),
+        'processed': processed,
+        'failed': failed,
+        'results': results,
+    }
