@@ -1,9 +1,5 @@
-0:00:21 Tab1 FinishNav6
-0:00:21 Tab1 PageLoad
-0:00:21 Tab1 PageLoad
-0:01:49 Widget Closed: TooltipAura
-0:01:57 Widget Closed: TooltipAura
-0:06:29 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp
+0:00:17 Tab1 FinishNav4
+0:01:20 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp
 0:00:00 Startup
 0:00:00 Microsoft.DeleteProfileHelper.CleanUpEphemeralProfiles
 0:00:00 Microsoft.DeleteProfileHelper.CleanUpDeletedProfiles
@@ -15,32 +11,100 @@
 0:00:00 Tab1 PageLoad
 0:00:00 Tab1 FinishNav2
 0:00:00 Tab1 PageLoad
-0:00:01 Tab1 StartNav3 #typed
-0:00:01 Tab1 FinishNav3
-0:00:01 Tab1 PageLoad
-0:00:15 Tab1 StartNav4 #renderer-user #link
-0:00:15 Tab1 FinishNav4
-0:03:54 Tab1 StartNav5 #renderer-user #link
-0:03:54 Tab1 FinishNav5
-0:03:55 Tab1 StartNav6 #renderer-user #auto_subframe
-0:03:55 Tab1 StartNav7 #renderer-user #auto_subframe
-0:03:55 Tab1 FinishNav6
-0:03:55 Tab1 FinishNav7
-0:03:55 Tab1 PageLoad
-0:03:55 Tab1 PageLoad
-0:05:55 Widget Closed: TooltipAura
-0:06:23 Tab1 StartNav8 #renderer-user #link
-0:06:23 Tab1 FinishNav8
-0:06:23 Tab1 StartNav9 #renderer-user #auto_subframe
-0:06:23 Tab1 FinishNav9
-0:06:23 Tab1 PageLoad
-0:06:30 Tab1 StartNav10 #renderer-user #link
-0:06:30 Tab1 FinishNav10
-0:06:47 Tab1 StartNav11 #renderer-user #link
-0:06:47 Tab1 FinishNav11
-0:06:47 Tab1 StartNav12 #renderer-user #link
-0:06:47 Tab1 FinishNav12
-0:09:56 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp
+0:00:06 Tab1 StartNav3 #typed
+0:00:06 Tab1 FinishNav3
+0:00:06 Tab1 PageLoad
+0:00:18 Tab1 StartNav4 #renderer-user #link
+0:00:18 Tab1 FinishNav4
+0:00:22 Tab1 StartNav5 #renderer-user #auto_subframe
+0:00:22 Tab1 FinishNav5
+0:00:22 Tab1 PageLoad
+0:00:22 Tab1 StartNav6 #renderer-user #auto_subframe
+0:00:22 Tab1 FinishNav6
+0:00:22 Tab1 PageLoad
+0:00:34 Widget Closed: TooltipAura
+0:20:33 Widget Closed: TooltipAura
+0:20:38 Widget Closed: TooltipAura
+0:21:56 Widget Closed: TooltipAura
+0:22:13 Widget Closed: TooltipAura
+0:22:24 Widget Closed: TooltipAura
+0:22:37 Widget Closed: TooltipAura
+1:14:49 Widget Closed: TooltipAura
+1:14:53 Widget Closed: TooltipAura
+1:16:30 Tab1 StartNav7 #renderer-user #link
+1:16:30 Tab1 FinishNav7
+1:26:46 Tab1 StartNav8 #renderer-user #link
+1:26:46 Tab1 FinishNav8
+1:26:46 Tab1 StartNav9 #renderer-user #auto_subframe
+1:26:46 Tab1 StartNav10 #renderer-user #auto_subframe
+1:26:46 Tab1 FinishNav9
+1:26:46 Tab1 FinishNav10
+1:26:46 Tab1 PageLoad
+1:26:46 Tab1 PageLoad
+1:27:07 Tab1 StartNav11 #renderer-user #link
+1:27:07 Tab1 FinishNav11
+1:27:33 Tab1 StartNav12 #renderer-user #link
+1:27:33 Tab1 FinishNav12
+1:27:33 Tab1 StartNav13 #renderer-user #auto_subframe
+1:27:33 Tab1 StartNav14 #renderer-user #auto_subframe
+1:27:33 Tab1 FinishNav13
+1:27:33 Tab1 PageLoad
+1:27:33 Tab1 FinishNav14
+1:27:33 Tab1 PageLoad
+1:27:35 Tab1 StartNav15 #renderer-user #link
+1:27:35 Tab1 FinishNav15
+1:27:35 Tab1 StartNav16 #renderer-user #auto_subframe
+1:27:35 Tab1 FinishNav16
+1:27:35 Tab1 PageLoad
+1:28:02 Tab1 StartNav17 #renderer-user #link
+1:28:02 Tab1 FinishNav17
+1:28:02 Tab1 StartNav18 #renderer-user #auto_subframe
+1:28:02 Tab1 StartNav19 #renderer-user #auto_subframe
+1:28:02 Tab1 FinishNav18
+1:28:02 Tab1 FinishNav19
+1:28:02 Tab1 PageLoad
+1:28:02 Tab1 PageLoad
+1:28:38 Widget Closed: TooltipAura
+1:28:40 Tab1 StartNav20 #renderer-user #link
+1:28:40 Tab1 FinishNav20
+1:28:40 Tab1 StartNav21 #renderer-user #link
+1:28:40 Tab1 FinishNav21
+1:28:40 Tab1 StartNav22 #renderer-user #auto_subframe
+1:28:40 Tab1 StartNav23 #renderer-user #auto_subframe
+1:28:40 Tab1 FinishNav22
+1:28:40 Tab1 FinishNav23
+1:28:40 Tab1 PageLoad
+1:28:40 Tab1 PageLoad
+1:29:06 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp
+0:00:00 Startup
+0:00:00 Microsoft.DeleteProfileHelper.CleanUpEphemeralProfiles
+0:00:00 Microsoft.DeleteProfileHelper.CleanUpDeletedProfiles
+0:00:00 Microsoft.BrowserList.AddBrowser
+0:00:00 Browser1 Insert active Tab1 at 0
+0:00:00 Tab1 StartNav1 #auto_toplevel
+0:00:00 Tab1 StartNav2 #link
+0:00:00 Tab1 FinishNav1
+0:00:00 Tab1 PageLoad
+0:00:00 Tab1 FinishNav2
+0:00:00 Tab1 PageLoad
+0:00:02 Tab1 StartNav3 #typed
+0:00:02 Tab1 FinishNav3
+0:00:02 Tab1 PageLoad
+0:00:12 Tab1 StartNav4 #renderer-user #link
+0:00:12 Tab1 FinishNav4
+0:05:20 Tab1 StartNav5 #renderer-user #link
+0:05:20 Tab1 FinishNav5
+0:05:20 Tab1 StartNav6 #renderer-user #auto_subframe
+0:05:20 Tab1 FinishNav6
+0:05:20 Tab1 PageLoad
+0:12:03 Tab1 StartNav7 #renderer-user #link
+0:12:03 Tab1 FinishNav7
+0:15:50 Tab1 StartNav8 #renderer-user #link
+0:15:50 Tab1 FinishNav8
+0:15:50 Tab1 StartNav9 #renderer-user #auto_subframe
+0:15:50 Tab1 FinishNav9
+0:15:50 Tab1 PageLoad
+0:23:16 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp
 0:00:00 Startup
 0:00:00 Microsoft.DeleteProfileHelper.CleanUpEphemeralProfiles
 0:00:00 Microsoft.DeleteProfileHelper.CleanUpDeletedProfiles
@@ -57,96 +121,26 @@
 0:00:01 Tab1 PageLoad
 0:00:11 Tab1 StartNav4 #renderer-user #link
 0:00:11 Tab1 FinishNav4
-0:00:30 Tab1 StartNav5 #renderer-user #link
-0:00:30 Tab1 FinishNav5
-0:00:30 Tab1 StartNav6 #renderer-user #auto_subframe
-0:00:30 Tab1 FinishNav6
-0:00:30 Tab1 PageLoad
-0:00:43 Tab1 StartNav7 #renderer-user #link
-0:00:43 Tab1 FinishNav7
-0:00:43 Tab1 StartNav8 #renderer-user #auto_subframe
-0:00:43 Tab1 StartNav9 #renderer-user #auto_subframe
-0:00:43 Tab1 FinishNav8
-0:00:43 Tab1 FinishNav9
-0:00:43 Tab1 PageLoad
-0:00:43 Tab1 PageLoad
-0:00:56 Tab1 StartNav10 #renderer-user #link
-0:00:56 Tab1 FinishNav10
-0:00:56 Tab1 StartNav11 #renderer-user #auto_subframe
-0:00:56 Tab1 FinishNav11
-0:00:56 Tab1 PageLoad
-0:01:00 Tab1 StartNav12 #renderer-user #link
-0:01:00 Tab1 FinishNav12
-0:01:18 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp
-0:00:00 Startup
-0:00:00 Microsoft.DeleteProfileHelper.CleanUpEphemeralProfiles
-0:00:00 Microsoft.DeleteProfileHelper.CleanUpDeletedProfiles
-0:00:00 Microsoft.BrowserList.AddBrowser
-0:00:00 Browser1 Insert active Tab1 at 0
-0:00:00 Tab1 StartNav1 #auto_toplevel
-0:00:00 Tab1 StartNav2 #link
-0:00:00 Tab1 FinishNav1
-0:00:00 Tab1 PageLoad
-0:00:00 Tab1 FinishNav2
-0:00:00 Tab1 PageLoad
-0:00:01 Tab1 StartNav3 #typed
-0:00:01 Tab1 FinishNav3
-0:00:01 Tab1 PageLoad
-0:00:09 Tab1 StartNav4 #renderer-user #link
-0:00:09 Tab1 FinishNav4
-0:00:44 Tab1 StartNav5 #renderer-user #link
-0:00:44 Tab1 FinishNav5
-0:00:48 Tab1 StartNav6 #renderer-user #link
-0:00:48 Tab1 FinishNav6
-0:00:55 Tab1 StartNav7 #renderer-user #link
-0:00:55 Tab1 FinishNav7
-0:01:01 Tab1 StartNav8 #renderer-user #link
-0:01:01 Tab1 FinishNav8
-0:01:01 Tab1 StartNav9 #renderer-user #auto_subframe
-0:01:01 Tab1 FinishNav9
-0:01:01 Tab1 PageLoad
-0:01:09 Tab1 StartNav10 #renderer-user #link
-0:01:09 Tab1 FinishNav10
-0:01:12 Tab1 StartNav11 #renderer-user #link
-0:01:12 Tab1 FinishNav11
-0:01:12 Tab1 StartNav12 #renderer-user #auto_subframe
-0:01:12 Tab1 FinishNav12
-0:01:12 Tab1 PageLoad
-4:58:05 Tab1 StartNav13 #renderer-user #link
-4:58:05 Tab1 FinishNav13
-4:58:05 Tab1 StartNav14 #renderer-user #auto_subframe
-4:58:05 Tab1 StartNav15 #renderer-user #auto_subframe
-4:58:05 Tab1 FinishNav14
-4:58:05 Tab1 FinishNav15
-4:58:05 Tab1 PageLoad
-4:58:05 Tab1 PageLoad
-4:58:10 Tab1 StartNav16 #renderer-user #link
-4:58:10 Tab1 FinishNav16
-4:58:13 Tab1 StartNav17 #renderer-user #link
-4:58:13 Tab1 FinishNav17
-4:58:13 Tab1 StartNav18 #renderer-user #auto_subframe
-4:58:13 Tab1 StartNav19 #renderer-user #auto_subframe
-4:58:13 Tab1 FinishNav18
-4:58:13 Tab1 FinishNav19
-4:58:13 Tab1 PageLoad
-4:58:13 Tab1 PageLoad
-4:58:31 Widget Closed: TooltipAura
-4:58:33 Widget Closed: TooltipAura
-5:01:21 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp
-0:00:00 Startup
-0:00:00 Microsoft.DeleteProfileHelper.CleanUpEphemeralProfiles
-0:00:00 Microsoft.DeleteProfileHelper.CleanUpDeletedProfiles
-0:00:00 Microsoft.BrowserList.AddBrowser
-0:00:00 Browser1 Insert active Tab1 at 0
-0:00:00 Tab1 StartNav1 #auto_toplevel
-0:00:00 Tab1 StartNav2 #link
-0:00:00 Tab1 FinishNav1
-0:00:00 Tab1 PageLoad
-0:00:00 Tab1 FinishNav2
-0:00:00 Tab1 PageLoad
-0:00:04 Tab1 StartNav3 #typed
-0:00:04 Tab1 FinishNav3
-0:00:04 Tab1 PageLoad
-0:00:17 Tab1 StartNav4 #renderer-user #link
-0:00:17 Tab1 FinishNav4
-0:01:20 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp
+0:01:16 Tab1 StartNav5 #renderer-user #link
+0:01:16 Tab1 FinishNav5
+0:01:16 Tab1 StartNav6 #renderer-user #auto_subframe
+0:01:16 Tab1 FinishNav6
+0:01:16 Tab1 PageLoad
+0:10:50 Microsoft.Clipboard.WriteText
+0:12:10 Widget Closed: TooltipAura
+0:12:16 Widget Closed: TooltipAura
+0:12:21 Widget Closed: TooltipAura
+0:15:29 Widget Closed: TooltipAura
+0:15:46 Widget Closed: TooltipAura
+0:16:13 Tab1 StartNav7 #renderer-user #link
+0:16:13 Tab1 FinishNav7
+0:16:13 Tab1 StartNav8 #renderer-user #auto_subframe
+0:16:13 Tab1 FinishNav8
+0:16:13 Tab1 PageLoad
+0:16:14 Tab1 StartNav9 #renderer-user #link
+0:16:14 Tab1 FinishNav9
+0:16:15 Tab1 StartNav10 #renderer-user #auto_subframe
+0:16:15 Tab1 FinishNav10
+0:16:15 Tab1 PageLoad
+0:16:39 Widget Closed: TooltipAura
+0:25:56 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp

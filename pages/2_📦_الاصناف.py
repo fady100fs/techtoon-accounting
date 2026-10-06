@@ -13,7 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 # ✅ 1. إعدادات الصفحة أولاً
 st.set_page_config(page_title="الأصناف", page_icon="📦", layout="wide")
 
-# القائمة الجانبية + الصلاحيات
+# القائمة الجانبية + الصلاحيات + queue_state_updates
 from sidebar import render_sidebar, can_modify, require_modify, queue_state_updates
 render_sidebar()
 
@@ -34,18 +34,19 @@ current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
 
 # ✅ 3. التنقل بـ Enter
-from keyboard_nav import enable_enter_navigation, add_enter_hint
-enable_enter_navigation()
-add_enter_hint()
+try:
+    from keyboard_nav import enable_enter_navigation, add_enter_hint
+    enable_enter_navigation()
+    add_enter_hint()
+except Exception:
+    pass
 
 
 # ==========================================
 # أدوات مساعدة
 # ==========================================
-# حقول الكود في جدول الأصناف
 CODE_FIELDS = [f for f in ("code", "item_code", "barcode", "sku") if hasattr(models.Item, f)]
 
-# اسم حقل الكمية في جدول مكونات الصنف المدمج
 KC_QTY_FIELD = next(
     (f for f in ("quantity", "qty", "component_quantity") if hasattr(models.KitComponent, f)),
     None,
@@ -54,7 +55,6 @@ KC_QTY_FIELD = next(
 KIT_LABEL = "صنف مدمج (Kit)"
 NORMAL_LABEL = "صنف عادي"
 
-# ✅ إعدادات الكميات الكسرية (للتعديل السريع في كل الصفحة)
 QTY_MIN = 0.0
 QTY_STEP = 0.25
 QTY_DEFAULT = 1.0
@@ -62,14 +62,10 @@ QTY_FORMAT = "%.2f"
 
 
 def flash(msg):
-    """رسالة تظهر بعد إعادة التحميل (st.success المباشرة تختفي مع st.rerun)."""
     st.session_state["_items_flash"] = msg
 
 
 def parse_components(edited_df, by_label):
-    """يحوّل جدول المكونات إلى {item_id: الكمية}.
-    يتجاهل الصفوف الناقصة ويجمع المكرر.
-    يدعم الكميات الكسرية (0.25 / 0.5 ...)."""
     result = {}
     for _, row in edited_df.iterrows():
         lbl = row.get("المكوّن")
@@ -88,7 +84,6 @@ def parse_components(edited_df, by_label):
 
 
 def next_selection(cs, current_label, saved_item=None, deleting=False):
-    """نص الخيار الذي يُختار بعد الحفظ أو الحذف: الصنف التالي في القائمة."""
     labels = cs.labels
     pos = labels.index(current_label) if current_label in labels else -1
     if 0 <= pos < len(labels) - 1:
@@ -99,7 +94,6 @@ def next_selection(cs, current_label, saved_item=None, deleting=False):
 
 
 def queue_after_item_change(cs, next_label):
-    """يفرّغ خانات التعديل وحقل البحث ويختار الصنف التالي، في التشغيل القادم."""
     values = {cs.code_key: ""}
     if next_label:
         values[cs.item_key] = next_label
@@ -111,7 +105,6 @@ def queue_after_item_change(cs, next_label):
 
 
 def add_kit_components(db, kit_id, components):
-    """يضيف مكونات الصنف المدمج {item_id: الكمية} إلى جدول KitComponent."""
     for comp_id, qty in components.items():
         kwargs = {"kit_item_id": kit_id, "component_item_id": comp_id}
         if KC_QTY_FIELD:
@@ -119,27 +112,16 @@ def add_kit_components(db, kit_id, components):
         db.add(models.KitComponent(**kwargs))
 
 
-# ✅ التحسين الجذري: دالة تحسب أرصدة كل الأصناف في استعلام واحد فقط
 def _build_stock_map(db):
-    """
-    يحسب أرصدة كل الأصناف من حركات المخزون في استعلام واحد بدل N استعلام.
-    يرجّع dict: {item_id: balance}
-    """
     rows = db.query(
         models.InventoryMovement.item_id,
         models.InventoryMovement.type,
         models.InventoryMovement.quantity,
     ).all()
-
     stock_map = {}
     for item_id, mtype, qty in rows:
         q = float(qty or 0)
-        if item_id not in stock_map:
-            stock_map[item_id] = 0.0
-        if mtype == 'in':
-            stock_map[item_id] += q
-        else:
-            stock_map[item_id] -= q
+        stock_map[item_id] = stock_map.get(item_id, 0.0) + (q if mtype == 'in' else -q)
     return stock_map
 
 
@@ -156,7 +138,6 @@ if msg:
 db = SessionLocal()
 fs = FormState("itemadd")
 
-# أقسام الصفحة
 SECTIONS = [
     "➕ إضافة صنف",
     "📋 قائمة الأصناف / تعديل",
@@ -167,11 +148,13 @@ section = st.radio("القسم", SECTIONS, horizontal=True, key="items_section",
                    label_visibility="collapsed")
 st.markdown("---")
 
+
 # ==========================================
 # التبويب 1: إضافة صنف
 # ==========================================
 if section == SECTIONS[0]:
     st.subheader("➕ إضافة صنف جديد")
+    st.caption("💡 بعد الحفظ، الحقول هتتفرّغ تلقائيًا.")
 
     item_type = st.radio("نوع الصنف:", [NORMAL_LABEL, KIT_LABEL], key=fs.key("type"))
 
@@ -198,18 +181,15 @@ if section == SECTIONS[0]:
         st.info("⚠️ الصنف المدمج يتكون من أصناف أخرى")
         non_kit_items = [it for it in db.query(models.Item).all() if not it.is_kit]
         comp_cs = CodeSearch(non_kit_items, prefix="addcomp", code_field=CODE_FIELDS, name_field="name")
-        selected_labels = st.multiselect("اختر المكونات (يمكن البحث بالكود أو الاسم):",
+        selected_labels = st.multiselect("اختر المكونات:",
                                          comp_cs.labels, key=fs.key("components"))
         for lbl in selected_labels:
             comp_item = comp_cs.by_label(lbl)
             if comp_item is None:
                 continue
-            # حقل الكمية يقبل الكسور (0.25 / 0.5 ...)
             qty = st.number_input(
                 f"كمية {lbl}",
-                min_value=QTY_MIN,
-                step=QTY_STEP,
-                value=QTY_DEFAULT,
+                min_value=QTY_MIN, step=QTY_STEP, value=QTY_DEFAULT,
                 format=QTY_FORMAT,
                 key=fs.key(f"qty_{comp_item.id}"),
             )
@@ -225,7 +205,8 @@ if section == SECTIONS[0]:
                 saved = False
                 try:
                     if item_type == NORMAL_LABEL:
-                        item = create_item(name, cost_price, sell_price, barcode if barcode else None,
+                        item = create_item(name, cost_price, sell_price,
+                                           barcode if barcode else None,
                                            created_by=current_user_id)
                         if selected_category_id:
                             item.category_id = selected_category_id
@@ -234,24 +215,45 @@ if section == SECTIONS[0]:
                     elif not components_data:
                         st.error("يرجى اختيار مكون واحد على الأقل")
                     else:
-                        item = create_kit_item(name, components_data, sell_price, created_by=current_user_id)
+                        item = create_kit_item(name, components_data, sell_price,
+                                                created_by=current_user_id)
                         if selected_category_id:
                             item.category_id = selected_category_id
                             db.commit()
                         saved = True
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
+
                 if saved:
                     flash("✅ تم الحفظ بنجاح!")
-                    fs.reset()
+                    # ✅ تفريغ كل حقول النموذج + qty_ للمكونات
+                    queue_state_updates(
+                        delete_prefixes=("itemadd_", "qty_"),
+                    )
+                    try:
+                        fs.reset()
+                    except Exception:
+                        pass
+                    st.rerun()
 
     with col2:
         if st.button("🧹 مسح الحقول"):
-            fs.reset()
+            queue_state_updates(delete_prefixes=("itemadd_", "qty_"))
+            try:
+                fs.reset()
+            except Exception:
+                pass
+            st.rerun()
 
     with col3:
         if st.button("❌ إلغاء"):
-            fs.reset()
+            queue_state_updates(delete_prefixes=("itemadd_", "qty_"))
+            try:
+                fs.reset()
+            except Exception:
+                pass
+            st.rerun()
+
 
 # ==========================================
 # التبويب 2: قائمة الأصناف + التعديل
@@ -272,35 +274,27 @@ if section == SECTIONS[1]:
     items = items_query.all()
 
     if items:
-        # ✅ التحسين الجذري: استعلامان فقط بدل (N + N) استعلام
-        # 1) كل التصنيفات في استعلام واحد → dict {id: name}
         _cat_map = {c.id: c.name for c in db.query(Category).all()}
-
-        # 2) كل حركات المخزون مرة واحدة، نجمعها في Python → dict {item_id: balance}
         _stock_map = _build_stock_map(db)
 
         data = []
         for item in items:
-            category_name = _cat_map.get(item.category_id, "بدون")
-            current_stock = _stock_map.get(item.id, 0.0)
-
             data.append({
                 "ID": item.id,
                 "الاسم": item.name,
-                "التصنيف": category_name,
+                "التصنيف": _cat_map.get(item.category_id, "بدون"),
                 "النوع": "مدمج" if item.is_kit else "عادي",
                 "سعر التكلفة": item.cost_price,
                 "سعر البيع": item.sell_price,
-                "الرصيد الحالي": current_stock,
+                "الرصيد الحالي": _stock_map.get(item.id, 0.0),
                 "الباركود": item.barcode or "-"
             })
         df = pd.DataFrame(data)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
         st.markdown("---")
         st.subheader("🔎 اختيار صنف للتعديل أو الحذف")
 
-        # 🔎 البحث بالكود
         cat_index = category_filter_options.index(filter_category)
         cs = CodeSearch(items, prefix=f"itmsel{cat_index}", code_field=CODE_FIELDS, name_field="name")
         cs.render_input()
@@ -337,7 +331,6 @@ if section == SECTIONS[1]:
             new_category = st.selectbox("التصنيف الجديد:", options=cat_names,
                                         index=cat_names.index(current_cat_name), key=f"edit_category_{sid}")
 
-            # ---------- نوع الصنف + محتوى الصنف المدمج ----------
             new_type = st.radio("نوع الصنف:", [NORMAL_LABEL, KIT_LABEL],
                                 index=1 if selected_item.is_kit else 0,
                                 horizontal=True, key=f"edit_type_{sid}")
@@ -347,9 +340,7 @@ if section == SECTIONS[1]:
             used_as_component = 0
             if want_kit:
                 st.markdown("**📦 محتوى الصنف المدمج (المكونات):**")
-                st.caption("أضف صفاً جديداً من أسفل الجدول، واختر المكوّن بالكود أو الاسم، وحدّد الكمية "
-                           "(يمكن إدخال كسور مثل 0.25 أو 0.5). "
-                           "لحذف مكوّن: حدّد صفه واضغط Delete.")
+                st.caption("أضف صفاً جديداً، واختر المكوّن، وحدّد الكمية (0.25 / 0.5).")
 
                 non_kit_items = [it for it in db.query(models.Item).all()
                                  if not it.is_kit and it.id != sid]
@@ -375,11 +366,8 @@ if section == SECTIONS[1]:
                     column_config={
                         "المكوّن": st.column_config.SelectboxColumn("المكوّن", options=comp_cs.labels, required=True),
                         "الكمية": st.column_config.NumberColumn(
-                            "الكمية",
-                            min_value=QTY_MIN,
-                            step=QTY_STEP,
-                            default=QTY_DEFAULT,
-                            format=QTY_FORMAT,
+                            "الكمية", min_value=QTY_MIN, step=QTY_STEP,
+                            default=QTY_DEFAULT, format=QTY_FORMAT,
                         ),
                     },
                 )
@@ -388,15 +376,15 @@ if section == SECTIONS[1]:
                 if new_components:
                     by_id = {it.id: it for it in non_kit_items}
                     comps_cost = sum(float(by_id[i].cost_price or 0) * q for i, q in new_components.items())
-                    st.caption(f"💡 مجموع تكلفة المكونات: {comps_cost:,.2f} (للمعلومية فقط)")
+                    st.caption(f"💡 مجموع تكلفة المكونات: {comps_cost:,.2f}")
+
                 if not selected_item.is_kit:
                     used_as_component = db.query(models.KitComponent).filter(
                         models.KitComponent.component_item_id == sid).count()
                     movements_count = db.query(models.InventoryMovement).filter(
                         models.InventoryMovement.item_id == sid).count()
                     if movements_count:
-                        st.warning(f"⚠️ لهذا الصنف {movements_count} حركة مخزون مسجلة، "
-                                   "وتحويله إلى مدمج لا يحذفها.")
+                        st.warning(f"⚠️ لهذا الصنف {movements_count} حركة مخزون مسجلة.")
 
             if st.button("💾 حفظ التعديلات", type="primary", key=f"save_edit_{sid}"):
                 if require_modify("تعديل الصنف"):
@@ -410,8 +398,7 @@ if section == SECTIONS[1]:
                     if want_kit and not new_components:
                         errors.append("الصنف المدمج يحتاج مكوناً واحداً على الأقل")
                     if want_kit and not selected_item.is_kit and used_as_component:
-                        errors.append(f"هذا الصنف مكوّن داخل {used_as_component} صنف مدمج، "
-                                      "ولا يمكن أن يصبح مدمجاً (لا تداخل بين المدمجات).")
+                        errors.append(f"هذا الصنف مكوّن داخل {used_as_component} صنف مدمج.")
 
                     if errors:
                         for e in errors:
@@ -440,7 +427,7 @@ if section == SECTIONS[1]:
                             st.session_state[f"kitver_{sid}"] = st.session_state.get(f"kitver_{sid}", 0) + 1
                             nxt = next_selection(cs, sel_label, saved_item=selected_item)
                             queue_after_item_change(cs, nxt)
-                            flash(f"✅ تم تحديث «{clean_name}» بنجاح — انتقلت إلى الصنف التالي.")
+                            flash(f"✅ تم تحديث «{clean_name}» — انتقلت للصنف التالي.")
                             st.rerun()
                         except Exception as e:
                             db.rollback()
@@ -451,11 +438,11 @@ if section == SECTIONS[1]:
             st.subheader("🗑️ حذف الصنف")
 
             if is_used_in_invoices:
-                st.error(f"🚫 لا يمكن حذف هذا الصنف! مستخدم في {len(invoice_lines)} فاتورة سابقة.")
+                st.error(f"🚫 لا يمكن حذف هذا الصنف! مستخدم في {len(invoice_lines)} فاتورة.")
             else:
                 confirm_delete = st.checkbox("تأكيد الحذف", key=f"confirm_del_{sid}")
-                if st.button("🗑️ حذف الصنف", type="secondary", disabled=not confirm_delete,
-                             key=f"del_item_{sid}"):
+                if st.button("🗑️ حذف الصنف", type="secondary",
+                             disabled=not confirm_delete, key=f"del_item_{sid}"):
                     if require_modify("حذف الصنف"):
                         try:
                             db.query(models.KitComponent).filter(
@@ -464,7 +451,6 @@ if section == SECTIONS[1]:
                             db.query(models.KitComponent).filter(
                                 models.KitComponent.component_item_id == sid
                             ).delete()
-
                             db.query(models.InventoryMovement).filter(
                                 models.InventoryMovement.item_id == sid
                             ).delete()
@@ -472,7 +458,12 @@ if section == SECTIONS[1]:
                             deleted_name = selected_item.name
                             db.delete(selected_item)
                             db.commit()
-                            queue_after_item_change(cs, next_selection(cs, sel_label, deleting=True))
+
+                            # ✅ تفريغ كل حقول التعديل والبحث
+                            queue_state_updates(
+                                delete_prefixes=("edit_", "kit_editor_", "confirm_del_"),
+                                delete_keys=(cs.query_key, cs.pick_key),
+                            )
                             flash(f"✅ تم حذف «{deleted_name}» بنجاح!")
                             st.rerun()
                         except Exception as e:
@@ -481,27 +472,18 @@ if section == SECTIONS[1]:
     else:
         st.info("لا توجد أصناف.")
 
+
 # ==========================================
 # التبويب 3: استيراد وتصدير الأصناف
 # ==========================================
 if section == SECTIONS[2]:
     st.subheader("📤 تصدير الأصناف")
-
-    st.info("""
-    💡 **يتم تصدير:**
-    - الكود (الباركود)
-    - الاسم
-    - أسعار التكلفة والبيع
-    - التصنيف
-    - الرصيد الافتتاحي
-    - الحد الأدنى للمخزون
-    """)
+    st.info("💡 يتم تصدير: الكود، الاسم، الأسعار، التصنيف، الرصيد الافتتاحي، الحد الأدنى.")
 
     if st.button("📤 تصدير جميع الأصناف إلى Excel", type="primary"):
         try:
             output_path, count = export_items_to_excel()
             st.success(f"✅ تم تصدير {count} صنف بنجاح!")
-
             with open(output_path, "rb") as file:
                 st.download_button(
                     label="⬇️ تحميل ملف الأصناف",
@@ -515,20 +497,7 @@ if section == SECTIONS[2]:
     st.markdown("---")
     st.subheader("📥 استيراد الأصناف من ملف")
 
-    st.markdown("""
-    ### الأعمدة المطلوبة:
-    - `name`: اسم الصنف (مطلوب)
-    - `barcode`: الباركود (اختياري)
-    - `cost_price`: سعر التكلفة
-    - `sell_price`: سعر البيع
-    - `is_kit`: عادي/مدمج
-    - `category`: التصنيف
-    - `min_stock`: الحد الأدنى
-    - `current_stock`: الرصيد الافتتاحي
-    """)
-
     col1, col2 = st.columns(2)
-
     with col1:
         if st.button("⬇️ تحميل قالب الأصناف"):
             try:
@@ -558,11 +527,14 @@ if section == SECTIONS[2]:
                     if errors:
                         for error in errors[:5]:
                             st.write(f"- {error}")
+                    # ✅ تفريغ الملف بعد الاستيراد
+                    queue_state_updates(delete_keys=("upload_items",))
                     st.rerun()
                 except Exception as e:
                     st.error(f"خطأ: {e}")
                 finally:
                     os.unlink(tmp_path)
+
 
 # ==========================================
 # التبويب 4: استيراد وتصدير التصنيفات
@@ -574,7 +546,6 @@ if section == SECTIONS[3]:
         try:
             output_path, count = export_categories_to_excel()
             st.success(f"✅ تم تصدير {count} تصنيف!")
-
             with open(output_path, "rb") as file:
                 st.download_button(
                     label="⬇️ تحميل",
@@ -598,6 +569,8 @@ if section == SECTIONS[3]:
             try:
                 count, errors = import_categories_from_file(tmp_path, created_by=current_user_id)
                 st.success(f"✅ تم استيراد {count} تصنيف!")
+                # ✅ تفريغ الملف بعد الاستيراد
+                queue_state_updates(delete_keys=("upload_categories",))
                 st.rerun()
             except Exception as e:
                 st.error(f"خطأ: {e}")
