@@ -3,6 +3,8 @@
 #   - غير مسجّل  → شاشة تسجيل الدخول فقط (بدون قائمة أو صفحات)
 #   - مسجّل      → صفحة المربعات الملونة (Metro) بدون قائمة جانبية
 # يتطلب Streamlit 1.39 أو أحدث (st.container(key=...))
+import time
+_t0 = time.time()
 import streamlit as st
 
 st.set_page_config(

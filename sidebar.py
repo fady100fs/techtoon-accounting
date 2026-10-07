@@ -5,7 +5,11 @@ import re
 from pathlib import Path
 
 import streamlit as st
-
+from feature_flags import (
+    s3_backup_enabled, barcode_enabled, pdf_reports_enabled,
+    recurring_invoices_enabled, fixed_assets_enabled,
+    loans_enabled, payroll_enabled,
+)
 from session_auth import restore_session, logout_user
 from form_manager import apply_pending_clears
 
@@ -289,7 +293,7 @@ def _apply_pending_state():
         if name.startswith("_") or name in ("current_user",):
             continue
         if (prefixes and name.startswith(prefixes)) or k in keys:
-            del st.session_state[k]
+            st.session_state.pop(k, None)
     for k, v in (pending.get("set") or {}).items():
         st.session_state[k] = v
 
