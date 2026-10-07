@@ -283,19 +283,43 @@ def request_form_clear(*prefixes):
 
 
 def _apply_pending_state():
-    pending = st.session_state.pop("_pending_state", None)
-    if not pending:
-        return
-    prefixes = tuple(pending.get("prefixes", ()))
-    keys = set(pending.get("keys", ()))
-    for k in list(st.session_state.keys()):
-        name = str(k)
-        if name.startswith("_") or name in ("current_user",):
-            continue
-        if (prefixes and name.startswith(prefixes)) or k in keys:
-            st.session_state.pop(k, None)
-    for k, v in (pending.get("set") or {}).items():
-        st.session_state[k] = v
+    """تطبيق التحديثات المُعلّقة على session_state بأمان."""
+    try:
+        pending = st.session_state.pop("_pending_state_updates", None)
+        if not pending:
+            return
+
+        delete_keys = pending.get("delete_keys", [])
+        set_values = pending.get("set_values", {})
+
+        if delete_keys:
+            try:
+                keys_iter = list(delete_keys) if not isinstance(delete_keys, str) else [delete_keys]
+            except Exception:
+                keys_iter = []
+
+            for k in keys_iter:
+                try:
+                    name = str(k) if k is not None else ""
+                    if not name:
+                        continue
+                    st.session_state.pop(name, None)
+                except Exception:
+                    continue
+
+        if set_values and isinstance(set_values, dict):
+            for k, v in set_values.items():
+                try:
+                    name = str(k) if k is not None else ""
+                    if not name:
+                        continue
+                    st.session_state[name] = v
+                except Exception:
+                    continue
+
+    except Exception:
+        pass
+
 
 
 def _is_modify_label(label):
