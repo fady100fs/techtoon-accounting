@@ -4,7 +4,7 @@ database.py — إعداد الاتصال بـ Neon PostgreSQL (نسخة محس�
 
 import os
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.pool import QueuePool
 from dotenv import load_dotenv
 
@@ -64,8 +64,12 @@ SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
     bind=engine,
-    expire_on_commit=False,    # ⭐ يسرّع الاستعلامات بعد commit
+    expire_on_commit=False,
 )
+
+
+# ⭐ هذا السطر الذي كان ناقصاً — مهم جداً لـ models.py
+Base = declarative_base()
 
 
 def get_db():
@@ -75,3 +79,8 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def get_session():
+    """جلسة مباشرة (للاستخدام السريع)."""
+    return SessionLocal()
