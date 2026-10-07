@@ -192,27 +192,34 @@ def _load_invoice_data(db, invoice):
 
 
 def _prepare_invoice_for_edit(data, fs, no_key):
+    """تحميل بيانات الفاتورة لوضع التعديل — يضبط items مباشرة."""
     st.session_state["_editing_invoice_id"] = data["id"]
     st.session_state["_editing_invoice_no"] = data["no_str"]
     st.session_state["_editing_invoice_type"] = data["type"]
+
     m = re.search(r"(\d+)$", str(data["no_str"] or ""))
     inv_num = int(m.group(1)) if m else 1
+
+    # ✅ 1. ضع invoice_items مباشرة في session_state
+    items_list = list(data.get("items", []))
+    st.session_state["invoice_items"] = items_list
+
+    # ✅ 2. احذف cache الـ data_editor ليُعاد بناؤه من invoice_items
+    st.session_state.pop("inv_items_editor", None)
+
+    # ✅ 3. باقي القيم عبر pending (لأنها widget keys)
     queue_state_updates(
-        delete_keys=("inv_items_editor",),
         set_values={
             no_key: inv_num,
             fs.key("type"): "sale (بيع)" if data["type"] == "sale" else "purchase (شراء)",
             fs.key(f"party_{data['type']}"): data["party_id"],
             fs.key("discount"): data["discount"],
             fs.key("tax"): data["tax"],
-            "invoice_items": data["items"],
         },
     )
 
 
-# ==========================================
-# إدارة المدفوعات
-# ==========================================
+
 def _get_invoice_paid_amount(db, invoice):
     try:
         return sum(float(p.amount or 0) for p in db.query(models.Payment).filter(
@@ -469,7 +476,6 @@ def render_payment_section(db, invoice):
                         st.success(f"✅ تم تسجيل دفعة {amount:,.2f} ج.م بنجاح!")
                         st.balloons()
 
-                        # ✅ تفريغ كل مفاتيح الدفع لهذه الفاتورة
                         clear_form(f"pay_", extra_keys=(
                             f"pay_amount_{invoice.id}",
                             f"pay_method_{invoice.id}",
@@ -606,7 +612,6 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
                         delete_keys=("inv_items_editor",),
                         set_values={no_key: next_no, "invoice_items": []},
                     )
-                    # ✅ تفريغ كل مفاتيح الفواتير
                     clear_form(PFX)
                     st.rerun()
                 except Exception as e:
@@ -628,7 +633,7 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, kb=None):
 fs = FormState("inv", cart_keys=("invoice_items",))
 
 st.title("🧾 إنشاء الفواتير")
-show_clear_hint()   # ✅ تلميح
+show_clear_hint()
 st.info(f"👤 المستخدم: **{current_user_name}**")
 
 flash = st.session_state.pop("_inv_flash", None)
@@ -756,28 +761,45 @@ cs = CodeSearch(
     qty_key=fs.key("qty"),
 )
 
+# ⭐ Placeholder: خيار فارغ يظهر افتراضياً
+PLACEHOLDER = "— اختر صنفاً —"
+
+# ⭐ كتلة التفريغ: تُعاد القيم الافتراضية قبل رسم الـ widgets
+if st.session_state.pop("inv_clear_item_pending", False):
+    st.session_state[cs.query_key] = ""
+    st.session_state[cs.item_key] = PLACEHOLDER
+    st.session_state[cs.price_key] = 0.0
+    st.session_state[fs.key("qty")] = 1
+
 cs.render_input()
 
 col1, col2, col3 = st.columns([2, 1, 1])
 with col1:
-    sel_label = st.selectbox("الصنف:", cs.labels, key=cs.item_key)
-cs.sync_price(sel_label, actual_type)
-current_item = cs.by_label(sel_label)
+    options = [PLACEHOLDER] + list(cs.labels)
+    sel_label = st.selectbox("الصنف:", options, key=cs.item_key)
+
+if sel_label == PLACEHOLDER:
+    current_item = None
+else:
+    cs.sync_price(sel_label, actual_type)
+    current_item = cs.by_label(sel_label)
+
 with col2:
     qty = st.number_input("الكمية:", min_value=1, step=1, key=fs.key("qty"))
 with col3:
     price = st.number_input("السعر:", min_value=0.0, step=0.1, key=cs.price_key)
 
 if st.button("➕ إضافة للفاتورة"):
-    if current_item is not None and qty > 0 and price > 0:
+    if sel_label == PLACEHOLDER:
+        st.error("⚠️ يرجى اختيار صنف أولاً")
+    elif current_item is not None and qty > 0 and price > 0:
         st.session_state.invoice_items.append({
             'item_name': current_item.name,
             'quantity': qty,
             'price': price
         })
         st.toast(f"✅ تمت إضافة {current_item.name}")
-        # ✅ تفريغ خانة البحث
-        clear_form(cs.query_key)
+        st.session_state["inv_clear_item_pending"] = True
         st.rerun()
     else:
         st.error("يرجى اختيار صنف وإدخال كمية وسعر صحيحين")
@@ -963,7 +985,6 @@ if st.session_state.invoice_items:
                     delete_keys=("inv_items_editor",),
                     set_values={"invoice_items": []},
                 )
-                # ✅ تفريغ كل مفاتيح النموذج + المدفوعات الجديدة
                 clear_form(PFX, f"newinv_")
                 db.close()
                 fs.reset()
