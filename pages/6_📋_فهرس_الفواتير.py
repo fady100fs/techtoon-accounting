@@ -17,6 +17,18 @@ from auth_required import require_login, get_current_user_id, get_current_user_n
 from cache_helpers import get_invoices_index, invalidate_all
 
 current_user = require_login()
+
+# ⭐ استقبال التنقل من شجرة الحسابات
+from navigation_helper import consume_navigation_flags, show_navigation_banner
+_nav = consume_navigation_flags()
+show_navigation_banner(_nav, page_name="فهرس الفواتير")
+_filter_party_id = _nav.get("filter_party_id")
+if _filter_party_id:
+    st.session_state["invoices_filter_party"] = _filter_party_id
+    _p = db.query(models.Party).filter(models.Party.id == _filter_party_id).first()
+    if _p:
+        st.info(f"🎯 مفلتر على: **{_p.name}**")
+
 current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
 

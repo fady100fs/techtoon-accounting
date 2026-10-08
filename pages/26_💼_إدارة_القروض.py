@@ -23,6 +23,18 @@ from auth_required import require_login, get_current_user_id, get_current_user_n
 from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
+
+# ⭐ استقبال التنقل من شجرة الحسابات
+from navigation_helper import consume_navigation_flags, show_navigation_banner
+_nav = consume_navigation_flags()
+show_navigation_banner(_nav, page_name="إدارة القروض")
+_filter_account_id = _nav.get("filter_account_id")
+if _filter_account_id:
+    st.session_state["loans_filter_account_id"] = _filter_account_id
+    _acc = db.query(models.Account).filter(models.Account.id == _filter_account_id).first()
+    if _acc:
+        st.info(f"🎯 مفلتر على الحساب: **{_acc.code} — {_acc.name}**")
+
 current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
 

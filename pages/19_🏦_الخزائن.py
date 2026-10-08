@@ -18,6 +18,18 @@ from auth_required import require_login, get_current_user_id, get_current_user_n
 from form_manager import clear_form, show_clear_hint
 
 current_user = require_login()
+
+# ⭐ استقبال التنقل من شجرة الحسابات
+from navigation_helper import consume_navigation_flags, show_navigation_banner
+_nav = consume_navigation_flags()
+show_navigation_banner(_nav, page_name="الخزائن")
+_open_box_id = _nav.get("_open_cash_boxes_id")
+if _open_box_id:
+    _box = db.query(models.CashBox).filter(models.CashBox.id == _open_box_id).first()
+    if _box:
+        st.success(f"🎯 الخزينة المطلوبة: **{_box.code} — {_box.name}**")
+        st.session_state["_focus_box_id"] = _open_box_id
+
 current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
 
