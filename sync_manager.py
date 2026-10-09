@@ -97,7 +97,8 @@ def _pull_all_from_neon(verbose: bool = False) -> dict:
         tables = _get_sync_tables_in_order()
 
         # ⭐ إيقاف FK مؤقتاً + مسح كل الجداول
-        local.execute("PRAGMA foreign_keys=OFF")
+        from sqlalchemy import text as _text_fk_off
+        local.execute(_text_fk_off("PRAGMA foreign_keys=OFF"))
 
         for model in reversed(tables):     # احذف من الابن إلى الأب
             try:
@@ -137,7 +138,8 @@ def _pull_all_from_neon(verbose: bool = False) -> dict:
                 logger.warning(f"⚠️ فشل نسخ {err}")
 
         local.commit()
-        local.execute("PRAGMA foreign_keys=ON")
+        from sqlalchemy import text as _text_fk_on
+        local.execute(_text_fk_on("PRAGMA foreign_keys=ON"))
         result["ok"] = len(result["errors"]) == 0
 
     except Exception as e:
