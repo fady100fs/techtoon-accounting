@@ -7,7 +7,12 @@ import os
 from datetime import datetime
 import io
 import zipfile
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+from sidebar import render_sidebar
+render_sidebar()
 st.set_page_config(page_title="النسخ السحابي", page_icon="☁️", layout="wide")
 
 from feature_flags import s3_backup_enabled

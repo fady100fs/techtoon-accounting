@@ -5,7 +5,12 @@ Lazy imports لتسريع بدء التطبيق.
 
 import streamlit as st
 from datetime import datetime
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+from sidebar import render_sidebar
+render_sidebar()
 # ⭐ لا نستورد opencv أو pyzbar هنا — فقط داخل الدوال
 
 st.set_page_config(page_title="قارئ الباركود", page_icon="📷", layout="wide")

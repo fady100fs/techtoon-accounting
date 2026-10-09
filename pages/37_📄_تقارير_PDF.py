@@ -5,7 +5,12 @@
 import streamlit as st
 from datetime import datetime
 import os
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+from sidebar import render_sidebar
+render_sidebar()
 st.set_page_config(page_title="تقارير PDF", page_icon="📄", layout="wide")
 
 from feature_flags import pdf_reports_enabled

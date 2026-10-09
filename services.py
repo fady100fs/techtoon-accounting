@@ -1,14 +1,28 @@
 # services.py
 """
 ملف المنطق البرمجي (Business Logic)
-يحتوي على جميع الدوال الأساسية للبرنامج
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 + Period Guard (فحص الفترات المحاسبية)
 + Journal Validation (فحص توازن القيود)
 + Movement Serial (المسلسل الرقمي الموحّد)
 + Recurring Invoices (الفواتير المتكررة)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⭐ النسخة المحدّثة لتعمل مع SQLite Mirror:
+   • القراءات → get_read_session() = SQLite محلياً
+   • الكتابات → get_write_session() = Neon دائماً
+   • بعد كل كتابة: مزامنة خلفية + مسح كاش
 """
+import os
+import random
+import shutil
+import threading
+import time
+from datetime import datetime, timedelta
 
-from database import SessionLocal
+import pandas as pd
+from sqlalchemy import func, literal_column, case
+from dateutil.relativedelta import relativedelta
+
 import models
 from models import (
     AccountType, CostHistory, CashBox, CashBoxType, CashTransfer,
@@ -19,25 +33,86 @@ from models import (
     AccountingPeriod, PeriodStatus,
     RecurringInvoiceTemplate, RecurringInvoiceLine, RecurrenceFrequency,
 )
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-import random
-import shutil
-import os
-import pandas as pd
-from sqlalchemy import func, literal_column, case
 from models import CostCenter, CostAllocation, CostCenterTransaction
 
-# ✅ Period Guard — فحص الفترات المغلقة
+# ✅ Period Guard
 from period_guard import check_period_open, check_period_open_for_entry
 
 
-# ==========================================
-# دوال الخزائن
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  🔌 طبقة الجلسات (Session Layer)
+# ═══════════════════════════════════════════════════════
+try:
+    from database import (
+        SessionLocal,
+        get_read_session,
+        get_write_session,
+        is_local_mode,
+    )
+except ImportError:
+    # توافقية عكسية — لو database.py لم يُحدَّث بعد
+    from database import SessionLocal
+    def get_read_session():  return SessionLocal()
+    def get_write_session(): return SessionLocal()
+    def is_local_mode():     return False
+
+
+def _read():
+    """جلسة قراءة — SQLite محلياً، Neon سحابياً."""
+    return get_read_session()
+
+
+def _write():
+    """جلسة كتابة — Neon دائماً."""
+    return get_write_session()
+
+
+# 🔁 Debounce: منع تشغيل مزامنات متعددة متزامنة
+_sync_pending = threading.Event()
+
+
+def _after_write():
+    """
+    بعد أي كتابة ناجحة:
+    1) امسح كاش Streamlit (لتحديث العرض)
+    2) ابدأ مزامنة خلفية (Debounced) محلياً فقط
+    """
+    # 1) مسح الكاش
+    try:
+        import streamlit as st
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+    # 2) مزامنة خلفية مُجمّعة
+    try:
+        if not is_local_mode():
+            return
+        if _sync_pending.is_set():
+            return  # مزامنة قيد الانتظار بالفعل
+        _sync_pending.set()
+
+        def _do_sync():
+            time.sleep(2)  # نافذة تجميع لعدة كتابات سريعة
+            try:
+                from sync_manager import full_sync
+                full_sync(verbose=False)
+            except Exception:
+                pass
+            finally:
+                _sync_pending.clear()
+
+        threading.Thread(target=_do_sync, daemon=True).start()
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════
+#  🏦 دوال الخزائن
+# ═══════════════════════════════════════════════════════
 def create_cash_box(name, code, box_type, account_id,
                     responsible_person=None, max_limit=None, notes=None, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
         existing = db.query(CashBox).filter(CashBox.code == code).first()
         if existing:
@@ -50,16 +125,21 @@ def create_cash_box(name, code, box_type, account_id,
         )
         db.add(cash_box)
         db.commit()
+        db.refresh(cash_box)
+        _after_write()
         return cash_box
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-def get_cash_box_balance(cash_box_id):
-    db = SessionLocal()
+def get_cash_box_balance(cash_box_id, db=None):
+    """رصيد الخزينة — يقرأ من SQLite محلياً."""
+    _owned = db is None
+    if _owned:
+        db = _read()
     try:
         cash_box = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
         if not cash_box:
@@ -75,11 +155,13 @@ def get_cash_box_balance(cash_box_id):
 
         return debit_total - credit_total
     finally:
-        db.close()
+        if _owned:
+            db.close()
 
 
-def transfer_between_cash_boxes(from_cash_box_id, to_cash_box_id, amount, notes=None, created_by=None):
-    db = SessionLocal()
+def transfer_between_cash_boxes(from_cash_box_id, to_cash_box_id, amount,
+                                 notes=None, created_by=None):
+    db = _write()
     try:
         if from_cash_box_id == to_cash_box_id:
             raise ValueError("لا يمكن التحويل بين نفس الخزينة!")
@@ -90,7 +172,8 @@ def transfer_between_cash_boxes(from_cash_box_id, to_cash_box_id, amount, notes=
         if not from_box or not to_box:
             raise ValueError("إحدى الخزائن غير موجودة!")
 
-        current_balance = get_cash_box_balance(from_cash_box_id)
+        # ⚠️ نستخدم db نفسه لضمان قراءة الحالة بعد أي كتابات معلقة
+        current_balance = get_cash_box_balance(from_cash_box_id, db=db)
         if current_balance < amount:
             raise ValueError(f"رصيد الخزينة غير كافٍ! الرصيد الحالي: {current_balance:,.2f}")
 
@@ -110,26 +193,34 @@ def transfer_between_cash_boxes(from_cash_box_id, to_cash_box_id, amount, notes=
         db.add(journal_entry)
         db.flush()
 
-        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=to_box.account_id, debit=amount, credit=0.0))
-        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=from_box.account_id, debit=0.0, credit=amount))
+        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=to_box.account_id,
+                                   debit=amount, credit=0.0))
+        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=from_box.account_id,
+                                   debit=0.0, credit=amount))
 
         db.flush()
         validate_journal_entry(db, journal_entry.id)
-
         db.commit()
+        _after_write()
         return transfer
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# دالة تحديث أسعار الصنف تلقائياً
-# ==========================================
-def update_item_prices(item_id):
-    db = SessionLocal()
+# ═══════════════════════════════════════════════════════
+#  💲 تحديث أسعار الصنف (يُستدعى داخل create_invoice)
+# ═══════════════════════════════════════════════════════
+def update_item_prices(item_id, db=None):
+    """
+    يحدّث أسعار الصنف من CostHistory.
+    إذا مُرِّر db، يستخدمه (بدون commit/close). وإلا يفتح جلسة كتابة.
+    """
+    _owned = db is None
+    if _owned:
+        db = _write()
     try:
         item = db.query(models.Item).filter(models.Item.id == item_id).first()
         if not item:
@@ -155,19 +246,24 @@ def update_item_prices(item_id):
         if item.avg_cost_price > 0:
             item.sell_price = item.avg_cost_price * 1.25
 
-        db.commit()
-    except Exception as e:
-        db.rollback()
+        if _owned:
+            db.commit()
+            _after_write()
+    except Exception:
+        if _owned:
+            db.rollback()
+        raise
     finally:
-        db.close()
+        if _owned:
+            db.close()
 
 
-# ==========================================
-# 1. دالة إضافة عميل أو مورد
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  1. إضافة عميل أو مورد
+# ═══════════════════════════════════════════════════════
 def create_party_with_opening_balance(name, party_type, opening_balance=0.0,
                                        phone=None, address=None, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
         if party_type == 'customer':
             parent_account = db.query(models.Account).filter(models.Account.code == "1201").first()
@@ -203,29 +299,33 @@ def create_party_with_opening_balance(name, party_type, opening_balance=0.0,
             db.flush()
 
             if party_type == 'customer':
-                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party_account.id, debit=opening_balance, credit=0.0))
-                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=opening_account.id, debit=0.0, credit=opening_balance))
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party_account.id,
+                                           debit=opening_balance, credit=0.0))
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=opening_account.id,
+                                           debit=0.0, credit=opening_balance))
             else:
-                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=opening_account.id, debit=opening_balance, credit=0.0))
-                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party_account.id, debit=0.0, credit=opening_balance))
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=opening_account.id,
+                                           debit=opening_balance, credit=0.0))
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party_account.id,
+                                           debit=0.0, credit=opening_balance))
 
             db.flush()
             validate_journal_entry(db, journal_entry.id)
 
         db.commit()
+        _after_write()
         return party
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 2. دالة إنشاء فاتورة
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  2. حساب تكلفة صنف للفاتورة (مساعد)
+# ═══════════════════════════════════════════════════════
 def _calc_item_cost_for_invoice(db, item):
-    """يحسب التكلفة الصحيحة لصنف عند إضافته للفاتورة."""
     if not item:
         return 0.0
     if getattr(item, "is_kit", False):
@@ -246,12 +346,14 @@ def _calc_item_cost_for_invoice(db, item):
     return cost
 
 
+# ═══════════════════════════════════════════════════════
+#  2b. إنشاء فاتورة
+# ═══════════════════════════════════════════════════════
 def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_id=1,
                    invoice_date=None, discount_percentage=0.0, tax_rate=14.0, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
         check_period_open(invoice_date or datetime.now(), entity="إنشاء فاتورة")
-
         period = get_period_for_date(invoice_date or datetime.now())
 
         party = db.query(models.Party).filter(models.Party.id == party_id).first()
@@ -309,7 +411,8 @@ def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_
                         total_cost=total_cost, purchase_date=invoice_date, supplier_id=party.id
                     )
                     db.add(cost_record)
-                    update_item_prices(item.id)
+                    # ⭐ نمرر نفس db لتفادي جلسة متداخلة منفصلة
+                    update_item_prices(item.id, db=db)
 
             journal_entry = models.JournalEntry(
                 date=invoice_date, description=f"فاتورة {invoice_type} رقم {invoice_number}",
@@ -320,14 +423,17 @@ def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_
             db.flush()
 
             if invoice_type == 'sale':
-                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id, debit=net_amount, credit=0.0))
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id,
+                                           debit=net_amount, credit=0.0))
                 revenue_account = db.query(models.Account).filter(models.Account.code == "4101").first()
                 if revenue_account:
-                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=revenue_account.id, debit=0.0, credit=amount_after_discount))
+                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=revenue_account.id,
+                                               debit=0.0, credit=amount_after_discount))
 
                 if item.cost_price > 0:
                     cogs_entry = models.JournalEntry(
-                        date=invoice_date, description=f"تكلفة البضاعة المباعة - فاتورة {invoice_number}",
+                        date=invoice_date,
+                        description=f"تكلفة البضاعة المباعة - فاتورة {invoice_number}",
                         reference_type="cogs", reference_id=invoice.id, created_by=created_by,
                         period_id=period.id if period else None
                     )
@@ -337,63 +443,69 @@ def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_
                     inventory_account = db.query(models.Account).filter(models.Account.code == "1301").first()
                     if cogs_account and inventory_account:
                         total_cost = item_data['quantity'] * item.cost_price
-                        db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=cogs_account.id, debit=total_cost, credit=0.0))
-                        db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=inventory_account.id, debit=0.0, credit=total_cost))
-
+                        db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=cogs_account.id,
+                                                   debit=total_cost, credit=0.0))
+                        db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=inventory_account.id,
+                                                   debit=0.0, credit=total_cost))
                     db.flush()
                     validate_journal_entry(db, cogs_entry.id)
             else:
                 inventory_account = db.query(models.Account).filter(models.Account.code == "1301").first()
                 if inventory_account:
-                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=inventory_account.id, debit=amount_after_discount, credit=0.0))
-                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id, debit=0.0, credit=net_amount))
+                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=inventory_account.id,
+                                               debit=amount_after_discount, credit=0.0))
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id,
+                                           debit=0.0, credit=net_amount))
 
             db.flush()
             validate_journal_entry(db, journal_entry.id)
 
         db.commit()
+        _after_write()
         return invoice
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 3. دالة إنشاء صنف مدمج
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  3. إنشاء صنف مدمج
+# ═══════════════════════════════════════════════════════
 def create_kit_item(kit_name, components, sell_price, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
         kit_item = models.Item(name=kit_name, sell_price=sell_price, is_kit=True, barcode=None)
         db.add(kit_item)
         db.flush()
 
         for comp_data in components:
-            component_item = db.query(models.Item).filter(models.Item.name == comp_data['item_name']).first()
+            component_item = db.query(models.Item).filter(
+                models.Item.name == comp_data['item_name']
+            ).first()
             if not component_item:
                 raise ValueError(f"الصنف المكون '{comp_data['item_name']}' غير موجود!")
-            kit_component = models.KitComponent(
+            db.add(models.KitComponent(
                 kit_item_id=kit_item.id, component_item_id=component_item.id,
                 quantity=comp_data['quantity']
-            )
-            db.add(kit_component)
+            ))
 
         db.commit()
+        _after_write()
         return kit_item
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 4. دالة إضافة صنف عادي
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  4. إضافة صنف عادي
+# ═══════════════════════════════════════════════════════
 def create_item(name, cost_price, sell_price, barcode=None, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
         if not barcode or barcode.strip() == "":
             barcode = f"ITEM{random.randint(100000, 999999)}"
@@ -406,24 +518,25 @@ def create_item(name, cost_price, sell_price, barcode=None, created_by=None):
         )
         db.add(item)
         db.commit()
+        db.refresh(item)
+        _after_write()
         return item
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 5. دالة تسجيل المدفوعات
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  5. تسجيل دفعة
+# ═══════════════════════════════════════════════════════
 def create_payment(party_id, amount, payment_type, payment_method='cash',
                    reference_number=None, notes=None, currency_id=1,
                    payment_date=None, created_by=None, cash_box_id=1):
-    db = SessionLocal()
+    db = _write()
     try:
         check_period_open(payment_date or datetime.now(), entity="تسجيل دفعة")
-
         period = get_period_for_date(payment_date or datetime.now())
 
         party = db.query(models.Party).filter(models.Party.id == party_id).first()
@@ -455,29 +568,34 @@ def create_payment(party_id, amount, payment_type, payment_method='cash',
         db.flush()
 
         if payment_type == 'receipt':
-            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cash_box.account_id, debit=amount, credit=0.0))
-            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id, debit=0.0, credit=amount))
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cash_box.account_id,
+                                       debit=amount, credit=0.0))
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id,
+                                       debit=0.0, credit=amount))
         else:
-            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id, debit=amount, credit=0.0))
-            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cash_box.account_id, debit=0.0, credit=amount))
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id,
+                                       debit=amount, credit=0.0))
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cash_box.account_id,
+                                       debit=0.0, credit=amount))
 
         db.flush()
         validate_journal_entry(db, journal_entry.id)
 
         db.commit()
+        _after_write()
         return payment
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 6. استيراد الأصناف
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  6. استيراد الأصناف
+# ═══════════════════════════════════════════════════════
 def import_items_from_file(file_path, created_by=None):
-    db = SessionLocal()
+    db = _write()
     imported_count = 0
     errors = []
 
@@ -510,7 +628,6 @@ def import_items_from_file(file_path, created_by=None):
 
                 if not barcode:
                     barcode = f"ITEM{random.randint(100000, 999999)}"
-
                 if sell_price == 0.0 and cost_price > 0:
                     sell_price = cost_price * 1.25
 
@@ -532,11 +649,10 @@ def import_items_from_file(file_path, created_by=None):
                 db.flush()
 
                 if current_stock > 0:
-                    opening_movement = models.InventoryMovement(
+                    db.add(models.InventoryMovement(
                         item_id=item.id, date=datetime.now(),
                         type='in', quantity=current_stock, reference_id=None
-                    )
-                    db.add(opening_movement)
+                    ))
                     item.total_purchased_qty = current_stock
 
                 imported_count += 1
@@ -545,19 +661,20 @@ def import_items_from_file(file_path, created_by=None):
                 errors.append(f"السطر {index + 1}: {str(e)}")
 
         db.commit()
+        _after_write()
         return imported_count, errors
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 7. استيراد العملاء/الموردين
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  7. استيراد العملاء/الموردين
+# ═══════════════════════════════════════════════════════
 def import_parties_from_file(file_path, party_type, created_by=None):
-    db = SessionLocal()
+    db = _write()
     imported_count = 0
     errors = []
 
@@ -617,30 +734,34 @@ def import_parties_from_file(file_path, party_type, created_by=None):
                         )
                         db.add(journal_entry)
                         db.flush()
-
                         if party_type == 'customer':
-                            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party_account.id, debit=opening_balance, credit=0.0))
-                            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=opening_account.id, debit=0.0, credit=opening_balance))
+                            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party_account.id,
+                                                       debit=opening_balance, credit=0.0))
+                            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=opening_account.id,
+                                                       debit=0.0, credit=opening_balance))
                         else:
-                            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=opening_account.id, debit=opening_balance, credit=0.0))
-                            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party_account.id, debit=0.0, credit=opening_balance))
+                            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=opening_account.id,
+                                                       debit=opening_balance, credit=0.0))
+                            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party_account.id,
+                                                       debit=0.0, credit=opening_balance))
 
                 imported_count += 1
             except Exception as e:
                 errors.append(f"السطر {index + 1}: {str(e)}")
 
         db.commit()
+        _after_write()
         return imported_count, errors
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 8. النسخ الاحتياطي
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  8. النسخ الاحتياطي (ملفات — لا يعتمد على DB session)
+# ═══════════════════════════════════════════════════════
 def create_backup(destination_folder):
     from pathlib import Path
     db_path = Path(__file__).parent / "accounting.db"
@@ -667,9 +788,9 @@ def restore_backup(backup_file_path):
     return True
 
 
-# ==========================================
-# 9. تصدير قالب Excel
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  9. تصدير قالب Excel (بدون DB)
+# ═══════════════════════════════════════════════════════
 def export_import_template(template_type, output_path=None):
     if not output_path:
         output_path = f"template_{template_type}.xlsx"
@@ -713,8 +834,7 @@ def export_import_template(template_type, output_path=None):
         workbook = writer.book
         worksheet = writer.sheets['Template']
         header_format = workbook.add_format({
-            'bold': True, 'bg_color': '#4472C4',
-            'font_color': 'white', 'border': 1
+            'bold': True, 'bg_color': '#4472C4', 'font_color': 'white', 'border': 1
         })
         for col_num, value in enumerate(df.columns.values):
             worksheet.write(0, col_num, value, header_format)
@@ -723,27 +843,25 @@ def export_import_template(template_type, output_path=None):
     return output_path
 
 
-# ==========================================
-# 10. دالة مساعدة للحصول على اسم المستخدم
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  10. اسم المستخدم
+# ═══════════════════════════════════════════════════════
 def get_user_name_by_id(user_id):
     if user_id is None:
         return "النظام"
-    db = SessionLocal()
+    db = _read()
     try:
         user = db.query(models.User).filter(models.User.id == user_id).first()
-        if user:
-            return user.full_name
-        return "مستخدم غير معروف"
+        return user.full_name if user else "مستخدم غير معروف"
     finally:
         db.close()
 
 
-# ==========================================
-# 11. دالة حساب الربح الفعلي للصنف
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  11. حساب الربح الفعلي للصنف
+# ═══════════════════════════════════════════════════════
 def calculate_item_profit(item_id):
-    db = SessionLocal()
+    db = _read()
     try:
         item = db.query(models.Item).filter(models.Item.id == item_id).first()
         if not item:
@@ -774,17 +892,16 @@ def calculate_item_profit(item_id):
         db.close()
 
 
-# ==========================================
-# 12. تصدير الأصناف إلى Excel
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  12. تصدير الأصناف إلى Excel
+# ═══════════════════════════════════════════════════════
 def export_items_to_excel(output_path=None):
-    db = SessionLocal()
+    db = _read()
     try:
         if not output_path:
             output_path = f"Items_Export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
         items = db.query(models.Item).all()
-
         categories_map = {c.id: c.name for c in db.query(Category).all()}
 
         rows = db.query(
@@ -802,107 +919,87 @@ def export_items_to_excel(output_path=None):
         for item in items:
             current_stock = stock_map.get(item.id, 0.0)
             data.append({
-                'id': item.id,
-                'name': item.name,
-                'barcode': item.barcode or '',
-                'cost_price': item.cost_price,
-                'sell_price': item.sell_price,
+                'id': item.id, 'name': item.name, 'barcode': item.barcode or '',
+                'cost_price': item.cost_price, 'sell_price': item.sell_price,
                 'avg_cost_price': item.avg_cost_price,
                 'is_kit': 'مدمج' if item.is_kit else 'عادي',
                 'category': categories_map.get(item.category_id, ''),
-                'min_stock': item.min_stock,
-                'current_stock': current_stock,
+                'min_stock': item.min_stock, 'current_stock': current_stock,
                 'total_purchased_qty': item.total_purchased_qty
             })
 
         df = pd.DataFrame(data)
-
         with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
             df.to_excel(writer, sheet_name='الأصناف', index=False)
-            workbook = writer.book
-            worksheet = writer.sheets['الأصناف']
-            header_format = workbook.add_format({
-                'bold': True, 'bg_color': '#4472C4',
-                'font_color': 'white', 'border': 1
-            })
-            for col_num, value in enumerate(df.columns.values):
-                worksheet.write(0, col_num, value, header_format)
+            wb = writer.book
+            ws = writer.sheets['الأصناف']
+            hf = wb.add_format({'bold': True, 'bg_color': '#4472C4', 'font_color': 'white', 'border': 1})
+            for i, v in enumerate(df.columns.values):
+                ws.write(0, i, v, hf)
             for i in range(len(df.columns)):
-                worksheet.set_column(i, i, 20)
-
+                ws.set_column(i, i, 20)
         return output_path, len(items)
     finally:
         db.close()
 
 
-# ==========================================
-# 13. تصدير التصنيفات إلى Excel
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  13. تصدير التصنيفات إلى Excel
+# ═══════════════════════════════════════════════════════
 def export_categories_to_excel(output_path=None):
-    db = SessionLocal()
+    db = _read()
     try:
         if not output_path:
             output_path = f"Categories_Export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
         categories = db.query(Category).all()
-
         cat_map = {c.id: c.name for c in categories}
         item_counts = db.query(
             models.Item.category_id, func.count(models.Item.id)
         ).group_by(models.Item.category_id).all()
         count_map = {cid: cnt for cid, cnt in item_counts}
 
-        data = []
-        for cat in categories:
-            data.append({
-                'id': cat.id,
-                'name': cat.name,
-                'description': cat.description or '',
-                'parent_category': cat_map.get(cat.parent_id, ''),
-                'is_active': 'نشط' if cat.is_active else 'معطل',
-                'items_count': count_map.get(cat.id, 0)
-            })
+        data = [{
+            'id': cat.id, 'name': cat.name,
+            'description': cat.description or '',
+            'parent_category': cat_map.get(cat.parent_id, ''),
+            'is_active': 'نشط' if cat.is_active else 'معطل',
+            'items_count': count_map.get(cat.id, 0)
+        } for cat in categories]
 
         df = pd.DataFrame(data)
-
         with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
             df.to_excel(writer, sheet_name='التصنيفات', index=False)
-            workbook = writer.book
-            worksheet = writer.sheets['التصنيفات']
-            header_format = workbook.add_format({
-                'bold': True, 'bg_color': '#4472C4',
-                'font_color': 'white', 'border': 1
-            })
-            for col_num, value in enumerate(df.columns.values):
-                worksheet.write(0, col_num, value, header_format)
+            wb = writer.book
+            ws = writer.sheets['التصنيفات']
+            hf = wb.add_format({'bold': True, 'bg_color': '#4472C4', 'font_color': 'white', 'border': 1})
+            for i, v in enumerate(df.columns.values):
+                ws.write(0, i, v, hf)
             for i in range(len(df.columns)):
-                worksheet.set_column(i, i, 20)
-
+                ws.set_column(i, i, 20)
         return output_path, len(categories)
     finally:
         db.close()
 
 
-# ==========================================
-# 14. تصدير العملاء/الموردين إلى Excel
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  14. تصدير العملاء/الموردين إلى Excel
+# ═══════════════════════════════════════════════════════
 def export_parties_to_excel(party_type, output_path=None):
-    db = SessionLocal()
+    db = _read()
     try:
         if not output_path:
             type_ar = 'Customers' if party_type == 'customer' else 'Suppliers'
             output_path = f"{type_ar}_Export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
         parties = db.query(models.Party).filter(models.Party.type == party_type).all()
-
         party_ids = [p.id for p in parties]
+
         accounts_map = {}
         if party_ids:
             account_ids = list({p.account_id for p in parties if p.account_id})
             if account_ids:
-                accs = db.query(models.Account).filter(
-                    models.Account.id.in_(account_ids)
-                ).all()
+                accs = db.query(models.Account).filter(models.Account.id.in_(account_ids)).all()
                 accounts_map = {a.id: a.code for a in accs}
 
         inv_type = 'sale' if party_type == 'customer' else 'purchase'
@@ -927,51 +1024,39 @@ def export_parties_to_excel(party_type, output_path=None):
 
         data = []
         for party in parties:
-            total_invoiced = invoiced_map.get(party.id, 0.0)
-            total_paid = paid_map.get(party.id, 0.0)
-            balance = total_invoiced - total_paid
-
+            ti = invoiced_map.get(party.id, 0.0)
+            tp = paid_map.get(party.id, 0.0)
             data.append({
-                'id': party.id,
-                'name': party.name,
-                'phone': party.phone or '',
-                'address': party.address or '',
+                'id': party.id, 'name': party.name,
+                'phone': party.phone or '', 'address': party.address or '',
                 'account_code': accounts_map.get(party.account_id, ''),
                 'credit_limit': party.credit_limit,
-                'total_invoiced': total_invoiced,
-                'total_paid': total_paid,
-                'balance': balance
+                'total_invoiced': ti, 'total_paid': tp, 'balance': ti - tp
             })
 
         df = pd.DataFrame(data)
-
         with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
             sheet_name = 'العملاء' if party_type == 'customer' else 'الموردين'
             df.to_excel(writer, sheet_name=sheet_name, index=False)
-            workbook = writer.book
-            worksheet = writer.sheets[sheet_name]
-            header_format = workbook.add_format({
-                'bold': True, 'bg_color': '#4472C4',
-                'font_color': 'white', 'border': 1
-            })
-            for col_num, value in enumerate(df.columns.values):
-                worksheet.write(0, col_num, value, header_format)
+            wb = writer.book
+            ws = writer.sheets[sheet_name]
+            hf = wb.add_format({'bold': True, 'bg_color': '#4472C4', 'font_color': 'white', 'border': 1})
+            for i, v in enumerate(df.columns.values):
+                ws.write(0, i, v, hf)
             for i in range(len(df.columns)):
-                worksheet.set_column(i, i, 20)
-
+                ws.set_column(i, i, 20)
         return output_path, len(parties)
     finally:
         db.close()
 
 
-# ==========================================
-# 15. استيراد التصنيفات
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  15. استيراد التصنيفات
+# ═══════════════════════════════════════════════════════
 def import_categories_from_file(file_path, created_by=None):
-    db = SessionLocal()
+    db = _write()
     imported_count = 0
     errors = []
-
     try:
         if file_path.endswith('.csv'):
             df = pd.read_csv(file_path, encoding='utf-8')
@@ -1002,46 +1087,44 @@ def import_categories_from_file(file_path, created_by=None):
                         errors.append(f"السطر {index + 1}: التصنيف الأب '{parent_name}' غير موجود")
                         continue
 
-                category = Category(
+                db.add(Category(
                     name=name, description=description,
-                    parent_id=parent_id, is_active=True,
-                    created_at=datetime.now()
-                )
-                db.add(category)
+                    parent_id=parent_id, is_active=True, created_at=datetime.now()
+                ))
                 imported_count += 1
             except Exception as e:
                 errors.append(f"السطر {index + 1}: {str(e)}")
 
         db.commit()
+        _after_write()
         return imported_count, errors
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 16. دوال إدارة المصروفات
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  16. المصروفات
+# ═══════════════════════════════════════════════════════
 def create_expense_category(name, description, account_id, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
-        existing = db.query(ExpenseCategory).filter(
-            ExpenseCategory.name == name
-        ).first()
+        existing = db.query(ExpenseCategory).filter(ExpenseCategory.name == name).first()
         if existing:
             raise ValueError(f"تصنيف '{name}' موجود مسبقاً!")
 
         category = ExpenseCategory(
-            name=name, description=description,
-            account_id=account_id, is_active=True,
-            created_at=datetime.now()
+            name=name, description=description, account_id=account_id,
+            is_active=True, created_at=datetime.now()
         )
         db.add(category)
         db.commit()
+        db.refresh(category)
+        _after_write()
         return category
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -1051,15 +1134,12 @@ def create_expense_category(name, description, account_id, created_by=None):
 def create_expense(category_id, amount, description, payment_method,
                    cash_box_id, reference_number=None, notes=None,
                    expense_date=None, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
         check_period_open(expense_date or datetime.now(), entity="تسجيل مصروف")
-
         period = get_period_for_date(expense_date or datetime.now())
 
-        category = db.query(ExpenseCategory).filter(
-            ExpenseCategory.id == category_id
-        ).first()
+        category = db.query(ExpenseCategory).filter(ExpenseCategory.id == category_id).first()
         if not category:
             raise ValueError("تصنيف المصروف غير موجود!")
 
@@ -1087,15 +1167,17 @@ def create_expense(category_id, amount, description, payment_method,
         db.add(journal_entry)
         db.flush()
 
-        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=category.account_id, debit=amount, credit=0.0))
-        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cash_box.account_id, debit=0.0, credit=amount))
+        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=category.account_id,
+                                   debit=amount, credit=0.0))
+        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cash_box.account_id,
+                                   debit=0.0, credit=amount))
 
         db.flush()
         validate_journal_entry(db, journal_entry.id)
-
         db.commit()
+        _after_write()
         return expense
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -1103,7 +1185,7 @@ def create_expense(category_id, amount, description, payment_method,
 
 
 def get_expenses_summary(start_date=None, end_date=None):
-    db = SessionLocal()
+    db = _read()
     try:
         query = db.query(
             ExpenseCategory.name,
@@ -1117,14 +1199,13 @@ def get_expenses_summary(start_date=None, end_date=None):
 
         results = query.group_by(ExpenseCategory.name).all()
         total_expenses = sum(r.total for r in results) if results else 0.0
-
         return {'by_category': results, 'total': total_expenses}
     finally:
         db.close()
 
 
 def delete_expense(expense_id):
-    db = SessionLocal()
+    db = _write()
     try:
         expense = db.query(Expense).filter(Expense.id == expense_id).first()
         if not expense:
@@ -1146,18 +1227,19 @@ def delete_expense(expense_id):
 
         db.delete(expense)
         db.commit()
-    except Exception as e:
+        _after_write()
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 17. دوال إدارة المخازن
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  17. المخازن
+# ═══════════════════════════════════════════════════════
 def create_warehouse(name, code, location=None, responsible_person=None, notes=None):
-    db = SessionLocal()
+    db = _write()
     try:
         existing = db.query(Warehouse).filter(Warehouse.code == code).first()
         if existing:
@@ -1165,21 +1247,25 @@ def create_warehouse(name, code, location=None, responsible_person=None, notes=N
 
         warehouse = Warehouse(
             name=name, code=code, location=location,
-            responsible_person=responsible_person,
-            notes=notes, is_active=True
+            responsible_person=responsible_person, notes=notes, is_active=True
         )
         db.add(warehouse)
         db.commit()
+        db.refresh(warehouse)
+        _after_write()
         return warehouse
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-def get_stock_level(warehouse_id, item_id):
-    db = SessionLocal()
+def get_stock_level(warehouse_id, item_id, db=None):
+    """رصيد المخزون — يقبل db اختياري للاستخدام داخل معاملة كتابة."""
+    _owned = db is None
+    if _owned:
+        db = _read()
     try:
         stock = db.query(StockLevel).filter(
             StockLevel.warehouse_id == warehouse_id,
@@ -1187,11 +1273,15 @@ def get_stock_level(warehouse_id, item_id):
         ).first()
         return stock.quantity if stock else 0.0
     finally:
-        db.close()
+        if _owned:
+            db.close()
 
 
-def update_stock_level(warehouse_id, item_id, quantity):
-    db = SessionLocal()
+def update_stock_level(warehouse_id, item_id, quantity, db=None):
+    """تحديث المخزون — يقبل db اختياري."""
+    _owned = db is None
+    if _owned:
+        db = _write()
     try:
         stock = db.query(StockLevel).filter(
             StockLevel.warehouse_id == warehouse_id,
@@ -1202,28 +1292,31 @@ def update_stock_level(warehouse_id, item_id, quantity):
             stock.quantity = quantity
             stock.last_updated = datetime.now()
         else:
-            stock = StockLevel(
-                warehouse_id=warehouse_id,
-                item_id=item_id,
-                quantity=quantity
-            )
-            db.add(stock)
+            db.add(StockLevel(
+                warehouse_id=warehouse_id, item_id=item_id, quantity=quantity
+            ))
 
-        db.commit()
-    except Exception as e:
-        db.rollback()
+        if _owned:
+            db.commit()
+            _after_write()
+    except Exception:
+        if _owned:
+            db.rollback()
         raise
     finally:
-        db.close()
+        if _owned:
+            db.close()
 
 
-def transfer_between_warehouses(from_warehouse_id, to_warehouse_id, item_id, quantity, notes=None, created_by=None):
-    db = SessionLocal()
+def transfer_between_warehouses(from_warehouse_id, to_warehouse_id, item_id, quantity,
+                                 notes=None, created_by=None):
+    db = _write()
     try:
         if from_warehouse_id == to_warehouse_id:
             raise ValueError("لا يمكن التحويل بين نفس المخزن!")
 
-        current_stock = get_stock_level(from_warehouse_id, item_id)
+        # ⭐ كلها بنفس db (نفس المعاملة)
+        current_stock = get_stock_level(from_warehouse_id, item_id, db=db)
         if current_stock < quantity:
             raise ValueError(f"الرصيد غير كافٍ! الرصيد الحالي: {current_stock}")
 
@@ -1231,22 +1324,19 @@ def transfer_between_warehouses(from_warehouse_id, to_warehouse_id, item_id, qua
             date=datetime.now(),
             from_warehouse_id=from_warehouse_id,
             to_warehouse_id=to_warehouse_id,
-            item_id=item_id,
-            quantity=quantity,
-            notes=notes,
-            created_by=created_by,
-            status='completed'
+            item_id=item_id, quantity=quantity,
+            notes=notes, created_by=created_by, status='completed'
         )
         db.add(transfer)
 
-        update_stock_level(from_warehouse_id, item_id, current_stock - quantity)
-
-        to_stock = get_stock_level(to_warehouse_id, item_id)
-        update_stock_level(to_warehouse_id, item_id, to_stock + quantity)
+        update_stock_level(from_warehouse_id, item_id, current_stock - quantity, db=db)
+        to_stock = get_stock_level(to_warehouse_id, item_id, db=db)
+        update_stock_level(to_warehouse_id, item_id, to_stock + quantity, db=db)
 
         db.commit()
+        _after_write()
         return transfer
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -1254,28 +1344,23 @@ def transfer_between_warehouses(from_warehouse_id, to_warehouse_id, item_id, qua
 
 
 def create_stock_count(warehouse_id, item_id, counted_quantity, counted_by=None, notes=None):
-    db = SessionLocal()
+    db = _write()
     try:
-        system_quantity = get_stock_level(warehouse_id, item_id)
+        system_quantity = get_stock_level(warehouse_id, item_id, db=db)
         difference = counted_quantity - system_quantity
 
         stock_count = StockCount(
-            date=datetime.now(),
-            warehouse_id=warehouse_id,
-            item_id=item_id,
-            system_quantity=system_quantity,
-            counted_quantity=counted_quantity,
-            difference=difference,
-            notes=notes,
-            counted_by=counted_by
+            date=datetime.now(), warehouse_id=warehouse_id, item_id=item_id,
+            system_quantity=system_quantity, counted_quantity=counted_quantity,
+            difference=difference, notes=notes, counted_by=counted_by
         )
         db.add(stock_count)
-
-        update_stock_level(warehouse_id, item_id, counted_quantity)
+        update_stock_level(warehouse_id, item_id, counted_quantity, db=db)
 
         db.commit()
+        _after_write()
         return stock_count
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -1283,7 +1368,7 @@ def create_stock_count(warehouse_id, item_id, counted_quantity, counted_by=None,
 
 
 def get_warehouse_stock_report(warehouse_id):
-    db = SessionLocal()
+    db = _read()
     try:
         stocks = db.query(StockLevel).filter(
             StockLevel.warehouse_id == warehouse_id,
@@ -1293,59 +1378,52 @@ def get_warehouse_stock_report(warehouse_id):
         item_ids = [s.item_id for s in stocks]
         items_map = {}
         if item_ids:
-            items_map = {
-                it.id: it for it in db.query(models.Item).filter(
-                    models.Item.id.in_(item_ids)
-                ).all()
-            }
+            items_map = {it.id: it for it in db.query(models.Item).filter(
+                models.Item.id.in_(item_ids)
+            ).all()}
 
         report = []
         for stock in stocks:
             item = items_map.get(stock.item_id)
             if item:
                 report.append({
-                    'item_id': item.id,
-                    'item_name': item.name,
-                    'barcode': item.barcode,
-                    'quantity': stock.quantity,
+                    'item_id': item.id, 'item_name': item.name,
+                    'barcode': item.barcode, 'quantity': stock.quantity,
                     'min_stock': item.min_stock,
                     'status': 'منخفض' if stock.quantity <= item.min_stock else 'جيد'
                 })
-
         return report
     finally:
         db.close()
 
 
-# ==========================================
-# 18. دوال إدارة الأصول الثابتة
-# ==========================================
-def create_fixed_asset(
-    name, code, category, purchase_date, purchase_cost,
-    salvage_value, useful_life_years, depreciation_method,
-    location=None, responsible_person=None, notes=None, created_by=None
-):
-    db = SessionLocal()
+# ═══════════════════════════════════════════════════════
+#  18. الأصول الثابتة
+# ═══════════════════════════════════════════════════════
+def create_fixed_asset(name, code, category, purchase_date, purchase_cost,
+                        salvage_value, useful_life_years, depreciation_method,
+                        location=None, responsible_person=None, notes=None, created_by=None):
+    db = _write()
     try:
         existing = db.query(FixedAsset).filter(FixedAsset.code == code).first()
         if existing:
             raise ValueError(f"كود الأصل '{code}' موجود مسبقاً!")
-
-        net_book_value = purchase_cost
 
         asset = FixedAsset(
             name=name, code=code, category=category,
             purchase_date=purchase_date, purchase_cost=purchase_cost,
             salvage_value=salvage_value, useful_life_years=useful_life_years,
             depreciation_method=depreciation_method,
-            accumulated_depreciation=0.0, net_book_value=net_book_value,
+            accumulated_depreciation=0.0, net_book_value=purchase_cost,
             location=location, responsible_person=responsible_person,
             notes=notes, status='active', created_by=created_by
         )
         db.add(asset)
         db.commit()
+        db.refresh(asset)
+        _after_write()
         return asset
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -1354,23 +1432,20 @@ def create_fixed_asset(
 
 def calculate_annual_depreciation(asset):
     depreciable_amount = asset.purchase_cost - asset.salvage_value
-
     if asset.depreciation_method == DepreciationMethod.STRAIGHT_LINE:
         return depreciable_amount / asset.useful_life_years
     elif asset.depreciation_method == DepreciationMethod.DECLINING_BALANCE:
         rate = 2.0 / asset.useful_life_years
         return asset.net_book_value * rate
-    else:
-        return 0.0
+    return 0.0
 
 
 def run_annual_depreciation(asset_id, year, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
         asset = db.query(FixedAsset).filter(FixedAsset.id == asset_id).first()
         if not asset:
             raise ValueError("الأصل غير موجود!")
-
         if asset.status != 'active':
             raise ValueError("الأصل غير نشط!")
 
@@ -1382,12 +1457,10 @@ def run_annual_depreciation(asset_id, year, created_by=None):
             DepreciationRecord.asset_id == asset_id,
             year_expr == str(year)
         ).first()
-
         if existing:
             raise ValueError(f"تم تسجيل إهلاك سنة {year} مسبقاً!")
 
         depreciation_amount = calculate_annual_depreciation(asset)
-
         if asset.net_book_value - depreciation_amount < asset.salvage_value:
             depreciation_amount = asset.net_book_value - asset.salvage_value
 
@@ -1406,38 +1479,26 @@ def run_annual_depreciation(asset_id, year, created_by=None):
         journal_entry = models.JournalEntry(
             date=year_end,
             description=f"إهلاك سنوي {year} - {asset.name} ({asset.code})",
-            reference_type="depreciation", reference_id=asset_id,
-            created_by=created_by
+            reference_type="depreciation", reference_id=asset_id, created_by=created_by
         )
         db.add(journal_entry)
         db.flush()
 
-        depreciation_expense_account = db.query(models.Account).filter(
-            models.Account.code == "5201"
-        ).first()
+        dep_exp_acc = db.query(models.Account).filter(models.Account.code == "5201").first()
+        accum_dep_acc = db.query(models.Account).filter(models.Account.code == "1501").first()
 
-        accumulated_depreciation_account = db.query(models.Account).filter(
-            models.Account.code == "1501"
-        ).first()
-
-        if depreciation_expense_account and accumulated_depreciation_account:
-            db.add(models.JournalLine(
-                entry_id=journal_entry.id,
-                account_id=depreciation_expense_account.id,
-                debit=depreciation_amount, credit=0.0
-            ))
-            db.add(models.JournalLine(
-                entry_id=journal_entry.id,
-                account_id=accumulated_depreciation_account.id,
-                debit=0.0, credit=depreciation_amount
-            ))
-
+        if dep_exp_acc and accum_dep_acc:
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=dep_exp_acc.id,
+                                       debit=depreciation_amount, credit=0.0))
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=accum_dep_acc.id,
+                                       debit=0.0, credit=depreciation_amount))
             db.flush()
             validate_journal_entry(db, journal_entry.id)
 
         db.commit()
+        _after_write()
         return record
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -1445,7 +1506,7 @@ def run_annual_depreciation(asset_id, year, created_by=None):
 
 
 def get_asset_depreciation_schedule(asset_id):
-    db = SessionLocal()
+    db = _read()
     try:
         asset = db.query(FixedAsset).filter(FixedAsset.id == asset_id).first()
         if not asset:
@@ -1453,29 +1514,25 @@ def get_asset_depreciation_schedule(asset_id):
 
         schedule = []
         current_value = asset.purchase_cost
-        annual_depreciation = (asset.purchase_cost - asset.salvage_value) / asset.useful_life_years
+        annual_dep = (asset.purchase_cost - asset.salvage_value) / asset.useful_life_years
 
         for year in range(1, asset.useful_life_years + 1):
-            depreciation = annual_depreciation
+            depreciation = annual_dep
             if current_value - depreciation < asset.salvage_value:
                 depreciation = current_value - asset.salvage_value
-
             current_value -= depreciation
-
             schedule.append({
-                'السنة': year,
-                'مبلغ الإهلاك': depreciation,
+                'السنة': year, 'مبلغ الإهلاك': depreciation,
                 'مجمع الإهلاك': asset.purchase_cost - current_value,
                 'صافي القيمة الدفترية': current_value
             })
-
         return {'asset': asset, 'schedule': schedule}
     finally:
         db.close()
 
 
 def dispose_asset(asset_id, disposal_date, disposal_value, notes=None, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
         asset = db.query(FixedAsset).filter(FixedAsset.id == asset_id).first()
         if not asset:
@@ -1489,51 +1546,38 @@ def dispose_asset(asset_id, disposal_date, disposal_value, notes=None, created_b
         journal_entry = models.JournalEntry(
             date=disposal_date,
             description=f"التخلص من الأصل: {asset.name} ({asset.code})",
-            reference_type="asset_disposal", reference_id=asset_id,
-            created_by=created_by
+            reference_type="asset_disposal", reference_id=asset_id, created_by=created_by
         )
         db.add(journal_entry)
         db.flush()
 
-        fixed_asset_account = db.query(models.Account).filter(
-            models.Account.code == "1500"
-        ).first()
+        fa_acc = db.query(models.Account).filter(models.Account.code == "1500").first()
+        accum_dep_acc = db.query(models.Account).filter(models.Account.code == "1501").first()
 
-        accumulated_depreciation_account = db.query(models.Account).filter(
-            models.Account.code == "1501"
-        ).first()
-
-        if fixed_asset_account and accumulated_depreciation_account:
-            db.add(models.JournalLine(
-                entry_id=journal_entry.id,
-                account_id=accumulated_depreciation_account.id,
-                debit=asset.accumulated_depreciation, credit=0.0
-            ))
-            db.add(models.JournalLine(
-                entry_id=journal_entry.id,
-                account_id=fixed_asset_account.id,
-                debit=0.0, credit=asset.purchase_cost
-            ))
+        if fa_acc and accum_dep_acc:
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=accum_dep_acc.id,
+                                       debit=asset.accumulated_depreciation, credit=0.0))
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=fa_acc.id,
+                                       debit=0.0, credit=asset.purchase_cost))
 
         db.commit()
+        _after_write()
         return {'asset': asset, 'gain_loss': gain_loss}
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 19. دوال تحليل الربحية المتقدم
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  19. تحليل الربحية
+# ═══════════════════════════════════════════════════════
 def get_profitability_by_item(start_date=None, end_date=None):
-    db = SessionLocal()
+    db = _read()
     try:
         query = db.query(
-            models.Item.id,
-            models.Item.name,
-            models.Item.category_id,
+            models.Item.id, models.Item.name, models.Item.category_id,
             func.sum(models.InvoiceLine.quantity).label('total_qty'),
             func.sum(models.InvoiceLine.total).label('total_revenue'),
             func.sum(models.InvoiceLine.quantity * models.InvoiceLine.cost_price).label('total_cost')
@@ -1542,11 +1586,9 @@ def get_profitability_by_item(start_date=None, end_date=None):
         ).join(
             models.Invoice, models.InvoiceLine.invoice_id == models.Invoice.id
         ).filter(
-            models.Invoice.type == 'sale',
-            models.Invoice.status != 'cancelled',
+            models.Invoice.type == 'sale', models.Invoice.status != 'cancelled',
             models.Item.is_kit == False
         )
-
         if start_date:
             query = query.filter(models.Invoice.date >= start_date)
         if end_date:
@@ -1561,63 +1603,50 @@ def get_profitability_by_item(start_date=None, end_date=None):
         cat_ids = list({r.category_id for r in results if r.category_id})
         cats_map = {}
         if cat_ids:
-            cats_map = {
-                c.id: c.name for c in db.query(Category).filter(
-                    Category.id.in_(cat_ids)
-                ).all()
-            }
+            cats_map = {c.id: c.name for c in db.query(Category).filter(
+                Category.id.in_(cat_ids)
+            ).all()}
 
-        profitability_data = []
+        data = []
         for r in results:
             profit = r.total_revenue - r.total_cost
-            profit_margin = (profit / r.total_revenue * 100) if r.total_revenue > 0 else 0
-
-            profitability_data.append({
-                'item_id': r.id,
-                'item_name': r.name,
+            margin = (profit / r.total_revenue * 100) if r.total_revenue > 0 else 0
+            data.append({
+                'item_id': r.id, 'item_name': r.name,
                 'category': cats_map.get(r.category_id, 'بدون'),
-                'quantity_sold': r.total_qty,
-                'revenue': r.total_revenue,
-                'cost': r.total_cost,
-                'profit': profit,
-                'profit_margin': profit_margin
+                'quantity_sold': r.total_qty, 'revenue': r.total_revenue,
+                'cost': r.total_cost, 'profit': profit, 'profit_margin': margin
             })
-
-        return profitability_data
+        return data
     finally:
         db.close()
 
 
 def get_profitability_by_customer(start_date=None, end_date=None):
-    db = SessionLocal()
+    db = _read()
     try:
         query = db.query(
-            models.Party.id,
-            models.Party.name,
+            models.Party.id, models.Party.name,
             func.sum(models.Invoice.net_amount).label('total_revenue'),
             func.count(models.Invoice.id).label('invoice_count')
         ).join(
             models.Invoice, models.Party.id == models.Invoice.party_id
         ).filter(
-            models.Invoice.type == 'sale',
-            models.Invoice.status != 'cancelled',
+            models.Invoice.type == 'sale', models.Invoice.status != 'cancelled',
             models.Party.type == 'customer'
         )
-
         if start_date:
             query = query.filter(models.Invoice.date >= start_date)
         if end_date:
             query = query.filter(models.Invoice.date <= end_date)
 
-        results = query.group_by(
-            models.Party.id, models.Party.name
-        ).order_by(
+        results = query.group_by(models.Party.id, models.Party.name).order_by(
             func.sum(models.Invoice.net_amount).desc()
         ).all()
 
-        customer_data = []
+        data = []
         for r in results:
-            cost_query = db.query(
+            cost_q = db.query(
                 func.sum(models.InvoiceLine.quantity * models.InvoiceLine.cost_price)
             ).join(
                 models.Invoice, models.InvoiceLine.invoice_id == models.Invoice.id
@@ -1626,37 +1655,29 @@ def get_profitability_by_customer(start_date=None, end_date=None):
                 models.Invoice.type == 'sale',
                 models.Invoice.status != 'cancelled'
             )
-
             if start_date:
-                cost_query = cost_query.filter(models.Invoice.date >= start_date)
+                cost_q = cost_q.filter(models.Invoice.date >= start_date)
             if end_date:
-                cost_query = cost_query.filter(models.Invoice.date <= end_date)
-
-            total_cost = cost_query.scalar() or 0.0
-            profit = r.total_revenue - total_cost
-            profit_margin = (profit / r.total_revenue * 100) if r.total_revenue > 0 else 0
-
-            customer_data.append({
-                'customer_id': r.id,
-                'customer_name': r.name,
+                cost_q = cost_q.filter(models.Invoice.date <= end_date)
+            tc = cost_q.scalar() or 0.0
+            profit = r.total_revenue - tc
+            margin = (profit / r.total_revenue * 100) if r.total_revenue > 0 else 0
+            data.append({
+                'customer_id': r.id, 'customer_name': r.name,
                 'invoice_count': r.invoice_count,
-                'revenue': r.total_revenue,
-                'cost': total_cost,
-                'profit': profit,
-                'profit_margin': profit_margin
+                'revenue': r.total_revenue, 'cost': tc,
+                'profit': profit, 'profit_margin': margin
             })
-
-        return customer_data
+        return data
     finally:
         db.close()
 
 
 def get_profitability_by_category(start_date=None, end_date=None):
-    db = SessionLocal()
+    db = _read()
     try:
         query = db.query(
-            Category.id,
-            Category.name,
+            Category.id, Category.name,
             func.sum(models.InvoiceLine.quantity).label('total_qty'),
             func.sum(models.InvoiceLine.total).label('total_revenue'),
             func.sum(models.InvoiceLine.quantity * models.InvoiceLine.cost_price).label('total_cost')
@@ -1667,44 +1688,34 @@ def get_profitability_by_category(start_date=None, end_date=None):
         ).join(
             models.Invoice, models.InvoiceLine.invoice_id == models.Invoice.id
         ).filter(
-            models.Invoice.type == 'sale',
-            models.Invoice.status != 'cancelled'
+            models.Invoice.type == 'sale', models.Invoice.status != 'cancelled'
         )
-
         if start_date:
             query = query.filter(models.Invoice.date >= start_date)
         if end_date:
             query = query.filter(models.Invoice.date <= end_date)
 
-        results = query.group_by(
-            Category.id, Category.name
-        ).order_by(
+        results = query.group_by(Category.id, Category.name).order_by(
             func.sum(models.InvoiceLine.total).desc()
         ).all()
 
-        category_data = []
+        data = []
         for r in results:
             profit = r.total_revenue - r.total_cost
-            profit_margin = (profit / r.total_revenue * 100) if r.total_revenue > 0 else 0
-
-            category_data.append({
-                'category_id': r.id,
-                'category_name': r.name,
+            margin = (profit / r.total_revenue * 100) if r.total_revenue > 0 else 0
+            data.append({
+                'category_id': r.id, 'category_name': r.name,
                 'quantity_sold': r.total_qty,
-                'revenue': r.total_revenue,
-                'cost': r.total_cost,
-                'profit': profit,
-                'profit_margin': profit_margin
+                'revenue': r.total_revenue, 'cost': r.total_cost,
+                'profit': profit, 'profit_margin': margin
             })
-
-        return category_data
+        return data
     finally:
         db.close()
 
 
 def get_monthly_profitability(year=None):
-    """الربحية الشهرية — تحسب تكلفة الأصناف المدمجة (Kits) من مكوناتها."""
-    db = SessionLocal()
+    db = _read()
     try:
         if year is None:
             year = datetime.now().year
@@ -1720,7 +1731,6 @@ def get_monthly_profitability(year=None):
             models.Invoice.status != 'cancelled',
             year_expr_inv == str(year),
         ).group_by(month_expr_inv).all()
-
         revenue_by_month = {r.month: float(r.revenue or 0) for r in revenue_rows}
 
         month_expr_line = func.to_char(models.Invoice.date, literal_column("'MM'"))
@@ -1728,10 +1738,8 @@ def get_monthly_profitability(year=None):
 
         invoice_lines = db.query(
             month_expr_line.label('month'),
-            models.InvoiceLine.quantity,
-            models.InvoiceLine.cost_price,
-            models.Item.id.label('item_id'),
-            models.Item.is_kit,
+            models.InvoiceLine.quantity, models.InvoiceLine.cost_price,
+            models.Item.id.label('item_id'), models.Item.is_kit,
             models.Item.cost_price.label('item_cost'),
             models.Item.avg_cost_price,
         ).join(
@@ -1769,14 +1777,12 @@ def get_monthly_profitability(year=None):
             revenue = revenue_by_month.get(m, 0.0)
             cost = cost_by_month.get(m, 0.0)
             profit = revenue - cost
-            profit_margin = (profit / revenue * 100) if revenue > 0 else 0
+            margin = (profit / revenue * 100) if revenue > 0 else 0
             monthly_data.append({
                 'month': m,
                 'month_name': datetime.strptime(m, '%m').strftime('%B'),
-                'revenue': revenue,
-                'cost': cost,
-                'profit': profit,
-                'profit_margin': profit_margin,
+                'revenue': revenue, 'cost': cost, 'profit': profit,
+                'profit_margin': margin,
             })
         return monthly_data
     finally:
@@ -1784,7 +1790,7 @@ def get_monthly_profitability(year=None):
 
 
 def compare_periods(period1_start, period1_end, period2_start, period2_end):
-    db = SessionLocal()
+    db = _read()
     try:
         def get_period_data(start, end):
             revenue = db.query(func.sum(models.Invoice.net_amount)).filter(
@@ -1806,33 +1812,25 @@ def compare_periods(period1_start, period1_end, period2_start, period2_end):
             ).scalar() or 0.0
 
             profit = revenue - cost
-            profit_margin = (profit / revenue * 100) if revenue > 0 else 0
+            margin = (profit / revenue * 100) if revenue > 0 else 0
+            return {'revenue': revenue, 'cost': cost, 'profit': profit, 'profit_margin': margin}
 
-            return {
-                'revenue': revenue,
-                'cost': cost,
-                'profit': profit,
-                'profit_margin': profit_margin
-            }
+        p1 = get_period_data(period1_start, period1_end)
+        p2 = get_period_data(period2_start, period2_end)
 
-        period1 = get_period_data(period1_start, period1_end)
-        period2 = get_period_data(period2_start, period2_end)
-
-        revenue_change = ((period1['revenue'] - period2['revenue']) / period2['revenue'] * 100) if period2['revenue'] > 0 else 0
-        profit_change = ((period1['profit'] - period2['profit']) / period2['profit'] * 100) if period2['profit'] > 0 else 0
+        rev_change = ((p1['revenue'] - p2['revenue']) / p2['revenue'] * 100) if p2['revenue'] > 0 else 0
+        prof_change = ((p1['profit'] - p2['profit']) / p2['profit'] * 100) if p2['profit'] > 0 else 0
 
         return {
-            'period1': period1,
-            'period2': period2,
-            'revenue_change': revenue_change,
-            'profit_change': profit_change
+            'period1': p1, 'period2': p2,
+            'revenue_change': rev_change, 'profit_change': prof_change
         }
     finally:
         db.close()
 
 
 def get_top_profitable_items(limit=10, start_date=None, end_date=None):
-    db = SessionLocal()
+    db = _read()
     try:
         query = db.query(
             models.Item.name,
@@ -1848,39 +1846,31 @@ def get_top_profitable_items(limit=10, start_date=None, end_date=None):
             models.Invoice.status != 'cancelled',
             models.Item.is_kit == False
         )
-
         if start_date:
             query = query.filter(models.Invoice.date >= start_date)
         if end_date:
             query = query.filter(models.Invoice.date <= end_date)
 
-        results = query.group_by(
-            models.Item.name
-        ).order_by(
+        results = query.group_by(models.Item.name).order_by(
             func.sum(models.InvoiceLine.total - (models.InvoiceLine.quantity * models.InvoiceLine.cost_price)).desc()
         ).limit(limit).all()
 
-        top_items = []
+        out = []
         for r in results:
             profit = r.revenue - r.cost
-            profit_margin = (profit / r.revenue * 100) if r.revenue > 0 else 0
-
-            top_items.append({
-                'item_name': r.name,
-                'quantity': r.qty,
-                'revenue': r.revenue,
-                'cost': r.cost,
-                'profit': profit,
-                'profit_margin': profit_margin
+            margin = (profit / r.revenue * 100) if r.revenue > 0 else 0
+            out.append({
+                'item_name': r.name, 'quantity': r.qty,
+                'revenue': r.revenue, 'cost': r.cost,
+                'profit': profit, 'profit_margin': margin
             })
-
-        return top_items
+        return out
     finally:
         db.close()
 
 
 def get_profitability_summary(start_date=None, end_date=None):
-    db = SessionLocal()
+    db = _read()
     try:
         revenue = db.query(func.sum(models.Invoice.net_amount)).filter(
             models.Invoice.type == 'sale',
@@ -1897,8 +1887,7 @@ def get_profitability_summary(start_date=None, end_date=None):
         ).join(
             models.Invoice, models.InvoiceLine.invoice_id == models.Invoice.id
         ).filter(
-            models.Invoice.type == 'sale',
-            models.Invoice.status != 'cancelled'
+            models.Invoice.type == 'sale', models.Invoice.status != 'cancelled'
         )
         if start_date:
             cost = cost.filter(models.Invoice.date >= start_date)
@@ -1913,30 +1902,24 @@ def get_profitability_summary(start_date=None, end_date=None):
             expenses = expenses.filter(Expense.date <= end_date)
         total_expenses = expenses.scalar() or 0.0
 
-        gross_profit = total_revenue - total_cost
-        net_profit = gross_profit - total_expenses
-        gross_margin = (gross_profit / total_revenue * 100) if total_revenue > 0 else 0
-        net_margin = (net_profit / total_revenue * 100) if total_revenue > 0 else 0
-
+        gp = total_revenue - total_cost
+        np_ = gp - total_expenses
         return {
-            'revenue': total_revenue,
-            'cost': total_cost,
-            'gross_profit': gross_profit,
-            'expenses': total_expenses,
-            'net_profit': net_profit,
-            'gross_margin': gross_margin,
-            'net_margin': net_margin
+            'revenue': total_revenue, 'cost': total_cost,
+            'gross_profit': gp, 'expenses': total_expenses,
+            'net_profit': np_,
+            'gross_margin': (gp / total_revenue * 100) if total_revenue > 0 else 0,
+            'net_margin': (np_ / total_revenue * 100) if total_revenue > 0 else 0
         }
     finally:
         db.close()
 
 
-# ==========================================
-# 20. دوال إدارة القروض
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  20. القروض
+# ═══════════════════════════════════════════════════════
 def calculate_loan_installments(principal_amount, annual_interest_rate, term_months):
     monthly_rate = annual_interest_rate / 100 / 12
-
     if monthly_rate == 0:
         monthly_payment = principal_amount / term_months
         total_interest = 0
@@ -1945,7 +1928,6 @@ def calculate_loan_installments(principal_amount, annual_interest_rate, term_mon
             monthly_rate * (1 + monthly_rate) ** term_months
         ) / ((1 + monthly_rate) ** term_months - 1)
         total_interest = (monthly_payment * term_months) - principal_amount
-
     return monthly_payment, total_interest
 
 
@@ -1953,168 +1935,118 @@ def generate_installment_schedule(principal_amount, annual_interest_rate, term_m
     monthly_payment, total_interest = calculate_loan_installments(
         principal_amount, annual_interest_rate, term_months
     )
-
     monthly_rate = annual_interest_rate / 100 / 12
-
     schedule = []
-    remaining_balance = principal_amount
-
+    remaining = principal_amount
     for i in range(1, term_months + 1):
-        interest_amount = remaining_balance * monthly_rate
-        principal_payment = monthly_payment - interest_amount
-        remaining_balance -= principal_payment
-
-        due_date = loan_date + relativedelta(months=i)
-
+        interest = remaining * monthly_rate
+        principal = monthly_payment - interest
+        remaining -= principal
         schedule.append({
             'installment_number': i,
-            'due_date': due_date,
-            'principal_amount': principal_payment,
-            'interest_amount': interest_amount,
+            'due_date': loan_date + relativedelta(months=i),
+            'principal_amount': principal,
+            'interest_amount': interest,
             'total_amount': monthly_payment,
-            'remaining_balance': max(0, remaining_balance)
+            'remaining_balance': max(0, remaining)
         })
-
     return schedule, monthly_payment, total_interest
 
 
-def create_loan(
-    loan_type, borrower_name, borrower_type, principal_amount,
-    annual_interest_rate, loan_date, term_months,
-    cash_box_id=None, notes=None, created_by=None
-):
-    db = SessionLocal()
+def create_loan(loan_type, borrower_name, borrower_type, principal_amount,
+                annual_interest_rate, loan_date, term_months,
+                cash_box_id=None, notes=None, created_by=None):
+    db = _write()
     try:
         check_period_open(loan_date, entity="إنشاء قرض")
 
-        loan_count = db.query(Loan).count()
-        loan_number = f"LOAN-{loan_count + 1:06d}"
-
+        loan_number = f"LOAN-{db.query(Loan).count() + 1:06d}"
         schedule, monthly_payment, total_interest = generate_installment_schedule(
             principal_amount, annual_interest_rate, term_months, loan_date
         )
-
         total_amount = principal_amount + total_interest
 
         loan = Loan(
-            loan_number=loan_number,
-            loan_type=loan_type,
-            borrower_name=borrower_name,
-            borrower_type=borrower_type,
-            principal_amount=principal_amount,
-            interest_rate=annual_interest_rate,
+            loan_number=loan_number, loan_type=loan_type,
+            borrower_name=borrower_name, borrower_type=borrower_type,
+            principal_amount=principal_amount, interest_rate=annual_interest_rate,
             loan_date=loan_date,
             maturity_date=loan_date + relativedelta(months=term_months),
-            term_months=term_months,
-            installment_amount=monthly_payment,
-            total_interest=total_interest,
-            total_amount=total_amount,
-            paid_amount=0.0,
-            remaining_amount=total_amount,
-            status=LoanStatus.ACTIVE,
-            cash_box_id=cash_box_id,
-            notes=notes,
-            created_by=created_by
+            term_months=term_months, installment_amount=monthly_payment,
+            total_interest=total_interest, total_amount=total_amount,
+            paid_amount=0.0, remaining_amount=total_amount,
+            status=LoanStatus.ACTIVE, cash_box_id=cash_box_id,
+            notes=notes, created_by=created_by
         )
         db.add(loan)
         db.flush()
 
-        for inst_data in schedule:
-            installment = LoanInstallment(
+        for inst in schedule:
+            db.add(LoanInstallment(
                 loan_id=loan.id,
-                installment_number=inst_data['installment_number'],
-                due_date=inst_data['due_date'],
-                principal_amount=inst_data['principal_amount'],
-                interest_amount=inst_data['interest_amount'],
-                total_amount=inst_data['total_amount'],
-                paid_amount=0.0,
-                status='pending'
-            )
-            db.add(installment)
+                installment_number=inst['installment_number'],
+                due_date=inst['due_date'],
+                principal_amount=inst['principal_amount'],
+                interest_amount=inst['interest_amount'],
+                total_amount=inst['total_amount'],
+                paid_amount=0.0, status='pending'
+            ))
 
         journal_entry = models.JournalEntry(
             date=loan_date,
             description=f"قرض {loan_type.value} رقم {loan_number} - {borrower_name}",
-            reference_type="loan",
-            reference_id=loan.id,
-            created_by=created_by
+            reference_type="loan", reference_id=loan.id, created_by=created_by
         )
         db.add(journal_entry)
         db.flush()
 
         if loan_type == LoanType.RECEIVED:
             if cash_box_id:
-                cash_box = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
-                if cash_box:
-                    db.add(models.JournalLine(
-                        entry_id=journal_entry.id,
-                        account_id=cash_box.account_id,
-                        debit=principal_amount,
-                        credit=0.0
-                    ))
-
-            loans_payable_account = db.query(models.Account).filter(
-                models.Account.code == "2301"
-            ).first()
-
-            if loans_payable_account:
-                db.add(models.JournalLine(
-                    entry_id=journal_entry.id,
-                    account_id=loans_payable_account.id,
-                    debit=0.0,
-                    credit=principal_amount
-                ))
+                cb = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
+                if cb:
+                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cb.account_id,
+                                               debit=principal_amount, credit=0.0))
+            loans_payable = db.query(models.Account).filter(models.Account.code == "2301").first()
+            if loans_payable:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=loans_payable.id,
+                                           debit=0.0, credit=principal_amount))
         else:
-            loans_receivable_account = db.query(models.Account).filter(
-                models.Account.code == "1250"
-            ).first()
-
-            if loans_receivable_account:
-                db.add(models.JournalLine(
-                    entry_id=journal_entry.id,
-                    account_id=loans_receivable_account.id,
-                    debit=principal_amount,
-                    credit=0.0
-                ))
-
+            loans_recv = db.query(models.Account).filter(models.Account.code == "1250").first()
+            if loans_recv:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=loans_recv.id,
+                                           debit=principal_amount, credit=0.0))
             if cash_box_id:
-                cash_box = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
-                if cash_box:
-                    db.add(models.JournalLine(
-                        entry_id=journal_entry.id,
-                        account_id=cash_box.account_id,
-                        debit=0.0,
-                        credit=principal_amount
-                    ))
+                cb = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
+                if cb:
+                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cb.account_id,
+                                               debit=0.0, credit=principal_amount))
 
         db.flush()
         validate_journal_entry(db, journal_entry.id)
-
         db.commit()
+        _after_write()
         return loan
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-def pay_loan_installment(installment_id, payment_date=None, cash_box_id=None, notes=None, created_by=None):
-    db = SessionLocal()
+def pay_loan_installment(installment_id, payment_date=None, cash_box_id=None,
+                          notes=None, created_by=None):
+    db = _write()
     try:
         installment = db.query(LoanInstallment).filter(
             LoanInstallment.id == installment_id
         ).first()
-
         if not installment:
             raise ValueError("القسط غير موجود!")
-
         if installment.status == 'paid':
             raise ValueError("هذا القسط مدفوع مسبقاً!")
 
         if payment_date is None:
             payment_date = datetime.now()
-
         check_period_open(payment_date, entity="سداد قسط")
 
         installment.paid_amount = installment.total_amount
@@ -2124,7 +2056,6 @@ def pay_loan_installment(installment_id, payment_date=None, cash_box_id=None, no
         loan = db.query(Loan).filter(Loan.id == installment.loan_id).first()
         loan.paid_amount += installment.total_amount
         loan.remaining_amount -= installment.total_amount
-
         if loan.remaining_amount <= 0.01:
             loan.status = LoanStatus.COMPLETED
             loan.remaining_amount = 0.0
@@ -2132,88 +2063,46 @@ def pay_loan_installment(installment_id, payment_date=None, cash_box_id=None, no
         journal_entry = models.JournalEntry(
             date=payment_date,
             description=f"سداد قسط {installment.installment_number} - قرض {loan.loan_number}",
-            reference_type="loan_payment",
-            reference_id=loan.id,
-            created_by=created_by
+            reference_type="loan_payment", reference_id=loan.id, created_by=created_by
         )
         db.add(journal_entry)
         db.flush()
 
         if loan.loan_type == LoanType.RECEIVED:
-            loans_payable_account = db.query(models.Account).filter(
-                models.Account.code == "2301"
-            ).first()
-
-            if loans_payable_account:
-                db.add(models.JournalLine(
-                    entry_id=journal_entry.id,
-                    account_id=loans_payable_account.id,
-                    debit=installment.principal_amount,
-                    credit=0.0
-                ))
-
-            interest_expense_account = db.query(models.Account).filter(
-                models.Account.code == "5301"
-            ).first()
-
-            if interest_expense_account and installment.interest_amount > 0:
-                db.add(models.JournalLine(
-                    entry_id=journal_entry.id,
-                    account_id=interest_expense_account.id,
-                    debit=installment.interest_amount,
-                    credit=0.0
-                ))
-
+            loans_payable = db.query(models.Account).filter(models.Account.code == "2301").first()
+            if loans_payable:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=loans_payable.id,
+                                           debit=installment.principal_amount, credit=0.0))
+            int_exp = db.query(models.Account).filter(models.Account.code == "5301").first()
+            if int_exp and installment.interest_amount > 0:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=int_exp.id,
+                                           debit=installment.interest_amount, credit=0.0))
             if cash_box_id:
-                cash_box = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
-                if cash_box:
-                    db.add(models.JournalLine(
-                        entry_id=journal_entry.id,
-                        account_id=cash_box.account_id,
-                        debit=0.0,
-                        credit=installment.total_amount
-                    ))
+                cb = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
+                if cb:
+                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cb.account_id,
+                                               debit=0.0, credit=installment.total_amount))
         else:
             if cash_box_id:
-                cash_box = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
-                if cash_box:
-                    db.add(models.JournalLine(
-                        entry_id=journal_entry.id,
-                        account_id=cash_box.account_id,
-                        debit=installment.total_amount,
-                        credit=0.0
-                    ))
-
-            loans_receivable_account = db.query(models.Account).filter(
-                models.Account.code == "1250"
-            ).first()
-
-            if loans_receivable_account:
-                db.add(models.JournalLine(
-                    entry_id=journal_entry.id,
-                    account_id=loans_receivable_account.id,
-                    debit=0.0,
-                    credit=installment.principal_amount
-                ))
-
-            interest_income_account = db.query(models.Account).filter(
-                models.Account.code == "4201"
-            ).first()
-
-            if interest_income_account and installment.interest_amount > 0:
-                db.add(models.JournalLine(
-                    entry_id=journal_entry.id,
-                    account_id=interest_income_account.id,
-                    debit=0.0,
-                    credit=installment.interest_amount
-                ))
+                cb = db.query(CashBox).filter(CashBox.id == cash_box_id).first()
+                if cb:
+                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cb.account_id,
+                                               debit=installment.total_amount, credit=0.0))
+            loans_recv = db.query(models.Account).filter(models.Account.code == "1250").first()
+            if loans_recv:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=loans_recv.id,
+                                           debit=0.0, credit=installment.principal_amount))
+            int_inc = db.query(models.Account).filter(models.Account.code == "4201").first()
+            if int_inc and installment.interest_amount > 0:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=int_inc.id,
+                                           debit=0.0, credit=installment.interest_amount))
 
         db.flush()
         validate_journal_entry(db, journal_entry.id)
-
         db.commit()
+        _after_write()
         return installment
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -2221,40 +2110,29 @@ def pay_loan_installment(installment_id, payment_date=None, cash_box_id=None, no
 
 
 def get_loans_summary(loan_type=None):
-    db = SessionLocal()
+    db = _read()
     try:
         query = db.query(Loan)
-
         if loan_type:
             query = query.filter(Loan.loan_type == loan_type)
-
         loans = query.all()
-
-        total_principal = sum(l.principal_amount for l in loans)
-        total_interest = sum(l.total_interest for l in loans)
-        total_amount = sum(l.total_amount for l in loans)
-        total_paid = sum(l.paid_amount for l in loans)
-        total_remaining = sum(l.remaining_amount for l in loans)
-
-        active_count = len([l for l in loans if l.status == LoanStatus.ACTIVE])
-        completed_count = len([l for l in loans if l.status == LoanStatus.COMPLETED])
 
         return {
             'loans': loans,
-            'total_principal': total_principal,
-            'total_interest': total_interest,
-            'total_amount': total_amount,
-            'total_paid': total_paid,
-            'total_remaining': total_remaining,
-            'active_count': active_count,
-            'completed_count': completed_count
+            'total_principal': sum(l.principal_amount for l in loans),
+            'total_interest': sum(l.total_interest for l in loans),
+            'total_amount': sum(l.total_amount for l in loans),
+            'total_paid': sum(l.paid_amount for l in loans),
+            'total_remaining': sum(l.remaining_amount for l in loans),
+            'active_count': len([l for l in loans if l.status == LoanStatus.ACTIVE]),
+            'completed_count': len([l for l in loans if l.status == LoanStatus.COMPLETED])
         }
     finally:
         db.close()
 
 
 def get_loan_schedule(loan_id):
-    db = SessionLocal()
+    db = _read()
     try:
         loan = db.query(Loan).filter(Loan.id == loan_id).first()
         if not loan:
@@ -2264,98 +2142,75 @@ def get_loan_schedule(loan_id):
             LoanInstallment.loan_id == loan_id
         ).order_by(LoanInstallment.installment_number).all()
 
-        schedule = []
-        for inst in installments:
-            schedule.append({
-                'id': inst.id,
-                'number': inst.installment_number,
-                'due_date': inst.due_date,
-                'principal': inst.principal_amount,
-                'interest': inst.interest_amount,
-                'total': inst.total_amount,
-                'paid': inst.paid_amount,
-                'paid_date': inst.paid_date,
-                'status': inst.status
-            })
-
+        schedule = [{
+            'id': i.id, 'number': i.installment_number,
+            'due_date': i.due_date, 'principal': i.principal_amount,
+            'interest': i.interest_amount, 'total': i.total_amount,
+            'paid': i.paid_amount, 'paid_date': i.paid_date, 'status': i.status
+        } for i in installments]
         return {'loan': loan, 'schedule': schedule}
     finally:
         db.close()
 
 
 def check_overdue_installments():
-    db = SessionLocal()
+    db = _read()
     try:
         today = datetime.now()
-
         overdue = db.query(LoanInstallment).join(Loan).filter(
             LoanInstallment.status == 'pending',
             LoanInstallment.due_date < today,
             Loan.status == LoanStatus.ACTIVE
         ).all()
 
-        overdue_list = []
+        out = []
         for inst in overdue:
             loan = db.query(Loan).filter(Loan.id == inst.loan_id).first()
-            days_overdue = (today - inst.due_date).days
-
-            overdue_list.append({
+            days = (today - inst.due_date).days
+            out.append({
                 'loan_number': loan.loan_number,
                 'borrower': loan.borrower_name,
                 'loan_type': loan.loan_type.value,
                 'installment_number': inst.installment_number,
                 'due_date': inst.due_date,
                 'amount': inst.total_amount,
-                'days_overdue': days_overdue
+                'days_overdue': days
             })
-
-        return overdue_list
+        return out
     finally:
         db.close()
 
 
-# ==========================================
-# 21. دوال إدارة الموظفين والرواتب
-# ==========================================
-def create_employee(
-    employee_code, full_name, job_title, hire_date, basic_salary,
-    national_id=None, phone=None, email=None, address=None,
-    department=None, allowances=0.0, deductions=0.0,
-    social_insurance=0.0, tax_rate=0.0,
-    bank_account=None, bank_name=None,
-    notes=None, created_by=None
-):
-    db = SessionLocal()
+# ═══════════════════════════════════════════════════════
+#  21. الموظفين والرواتب
+# ═══════════════════════════════════════════════════════
+def create_employee(employee_code, full_name, job_title, hire_date, basic_salary,
+                    national_id=None, phone=None, email=None, address=None,
+                    department=None, allowances=0.0, deductions=0.0,
+                    social_insurance=0.0, tax_rate=0.0,
+                    bank_account=None, bank_name=None,
+                    notes=None, created_by=None):
+    db = _write()
     try:
         existing = db.query(Employee).filter(Employee.employee_code == employee_code).first()
         if existing:
             raise ValueError(f"كود الموظف '{employee_code}' موجود مسبقاً!")
 
-        employee = Employee(
-            employee_code=employee_code,
-            full_name=full_name,
-            national_id=national_id,
-            phone=phone,
-            email=email,
-            address=address,
-            job_title=job_title,
-            department=department,
-            hire_date=hire_date,
-            basic_salary=basic_salary,
-            allowances=allowances,
-            deductions=deductions,
-            social_insurance=social_insurance,
-            tax_rate=tax_rate,
-            bank_account=bank_account,
-            bank_name=bank_name,
-            status=EmploymentStatus.ACTIVE,
-            notes=notes,
-            created_by=created_by
+        emp = Employee(
+            employee_code=employee_code, full_name=full_name,
+            national_id=national_id, phone=phone, email=email, address=address,
+            job_title=job_title, department=department, hire_date=hire_date,
+            basic_salary=basic_salary, allowances=allowances, deductions=deductions,
+            social_insurance=social_insurance, tax_rate=tax_rate,
+            bank_account=bank_account, bank_name=bank_name,
+            status=EmploymentStatus.ACTIVE, notes=notes, created_by=created_by
         )
-        db.add(employee)
+        db.add(emp)
         db.commit()
-        return employee
-    except Exception as e:
+        db.refresh(emp)
+        _after_write()
+        return emp
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -2363,37 +2218,27 @@ def create_employee(
 
 
 def calculate_monthly_salary(employee_id, month, year, overtime=0.0, bonus=0.0, other_deductions=0.0):
-    db = SessionLocal()
+    db = _read()
     try:
-        employee = db.query(Employee).filter(Employee.id == employee_id).first()
-        if not employee:
+        emp = db.query(Employee).filter(Employee.id == employee_id).first()
+        if not emp:
             raise ValueError("الموظف غير موجود!")
-
-        if employee.status != EmploymentStatus.ACTIVE:
+        if emp.status != EmploymentStatus.ACTIVE:
             raise ValueError("الموظف غير نشط!")
 
-        gross_salary = employee.basic_salary + employee.allowances + overtime + bonus
-
-        social_insurance_amount = gross_salary * (employee.social_insurance / 100)
-        tax_amount = gross_salary * (employee.tax_rate / 100)
-        total_deductions = social_insurance_amount + tax_amount + employee.deductions + other_deductions
-
-        net_salary = gross_salary - total_deductions
+        gross = emp.basic_salary + emp.allowances + overtime + bonus
+        si = gross * (emp.social_insurance / 100)
+        tax = gross * (emp.tax_rate / 100)
+        total_ded = si + tax + emp.deductions + other_deductions
+        net = gross - total_ded
 
         return {
-            'employee': employee,
-            'month': month,
-            'year': year,
-            'basic_salary': employee.basic_salary,
-            'allowances': employee.allowances,
-            'overtime': overtime,
-            'bonus': bonus,
-            'gross_salary': gross_salary,
-            'social_insurance': social_insurance_amount,
-            'tax': tax_amount,
+            'employee': emp, 'month': month, 'year': year,
+            'basic_salary': emp.basic_salary, 'allowances': emp.allowances,
+            'overtime': overtime, 'bonus': bonus, 'gross_salary': gross,
+            'social_insurance': si, 'tax': tax,
             'other_deductions': other_deductions,
-            'total_deductions': total_deductions,
-            'net_salary': net_salary
+            'total_deductions': total_ded, 'net_salary': net
         }
     finally:
         db.close()
@@ -2402,14 +2247,13 @@ def calculate_monthly_salary(employee_id, month, year, overtime=0.0, bonus=0.0, 
 def process_monthly_salary(employee_id, month, year, overtime=0.0, bonus=0.0,
                            other_deductions=0.0, payment_date=None,
                            payment_method='bank_transfer', notes=None, created_by=None):
-    db = SessionLocal()
+    db = _write()
     try:
         existing = db.query(SalaryRecord).filter(
             SalaryRecord.employee_id == employee_id,
             SalaryRecord.month == month,
             SalaryRecord.year == year
         ).first()
-
         if existing:
             raise ValueError(f"تم تسجيل راتب شهر {month}/{year} مسبقاً!")
 
@@ -2419,89 +2263,55 @@ def process_monthly_salary(employee_id, month, year, overtime=0.0, bonus=0.0,
 
         if payment_date is None:
             payment_date = datetime.now()
-
         check_period_open(payment_date, entity="صرف راتب")
 
         salary_record = SalaryRecord(
-            employee_id=employee_id,
-            month=month,
-            year=year,
+            employee_id=employee_id, month=month, year=year,
             basic_salary=salary_data['basic_salary'],
             allowances=salary_data['allowances'],
-            overtime=overtime,
-            bonus=bonus,
+            overtime=overtime, bonus=bonus,
             gross_salary=salary_data['gross_salary'],
             social_insurance=salary_data['social_insurance'],
-            tax=salary_data['tax'],
-            other_deductions=other_deductions,
+            tax=salary_data['tax'], other_deductions=other_deductions,
             total_deductions=salary_data['total_deductions'],
             net_salary=salary_data['net_salary'],
-            payment_date=payment_date,
-            payment_method=payment_method,
-            status='paid',
-            notes=notes,
-            created_by=created_by
+            payment_date=payment_date, payment_method=payment_method,
+            status='paid', notes=notes, created_by=created_by
         )
         db.add(salary_record)
 
         journal_entry = models.JournalEntry(
             date=payment_date,
             description=f"راتب شهر {month}/{year} - {salary_data['employee'].full_name}",
-            reference_type="salary",
-            reference_id=employee_id,
-            created_by=created_by
+            reference_type="salary", reference_id=employee_id, created_by=created_by
         )
         db.add(journal_entry)
         db.flush()
 
-        salary_expense_account = db.query(models.Account).filter(
-            models.Account.code == "5401"
-        ).first()
-
-        if salary_expense_account:
-            db.add(models.JournalLine(
-                entry_id=journal_entry.id,
-                account_id=salary_expense_account.id,
-                debit=salary_data['gross_salary'],
-                credit=0.0
-            ))
+        sal_exp = db.query(models.Account).filter(models.Account.code == "5401").first()
+        if sal_exp:
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=sal_exp.id,
+                                       debit=salary_data['gross_salary'], credit=0.0))
 
         if salary_data['social_insurance'] > 0:
-            social_insurance_account = db.query(models.Account).filter(
-                models.Account.code == "2401"
-            ).first()
-
-            if social_insurance_account:
-                db.add(models.JournalLine(
-                    entry_id=journal_entry.id,
-                    account_id=social_insurance_account.id,
-                    debit=0.0,
-                    credit=salary_data['social_insurance']
-                ))
+            si_acc = db.query(models.Account).filter(models.Account.code == "2401").first()
+            if si_acc:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=si_acc.id,
+                                           debit=0.0, credit=salary_data['social_insurance']))
 
         if salary_data['tax'] > 0:
-            tax_account = db.query(models.Account).filter(
-                models.Account.code == "2402"
-            ).first()
+            tax_acc = db.query(models.Account).filter(models.Account.code == "2402").first()
+            if tax_acc:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=tax_acc.id,
+                                           debit=0.0, credit=salary_data['tax']))
 
-            if tax_account:
-                db.add(models.JournalLine(
-                    entry_id=journal_entry.id,
-                    account_id=tax_account.id,
-                    debit=0.0,
-                    credit=salary_data['tax']
-                ))
-
-        db.add(models.JournalLine(
-            entry_id=journal_entry.id,
-            account_id=1,
-            debit=0.0,
-            credit=salary_data['net_salary']
-        ))
+        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=1,
+                                   debit=0.0, credit=salary_data['net_salary']))
 
         db.commit()
+        _after_write()
         return salary_record
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -2509,32 +2319,25 @@ def process_monthly_salary(employee_id, month, year, overtime=0.0, bonus=0.0,
 
 
 def get_employee_salary_history(employee_id):
-    db = SessionLocal()
+    db = _read()
     try:
         records = db.query(SalaryRecord).filter(
             SalaryRecord.employee_id == employee_id
         ).order_by(SalaryRecord.year.desc(), SalaryRecord.month.desc()).all()
 
-        history = []
-        for record in records:
-            history.append({
-                'id': record.id,
-                'month': record.month,
-                'year': record.year,
-                'gross_salary': record.gross_salary,
-                'deductions': record.total_deductions,
-                'net_salary': record.net_salary,
-                'payment_date': record.payment_date,
-                'status': record.status
-            })
-
-        return history
+        return [{
+            'id': r.id, 'month': r.month, 'year': r.year,
+            'gross_salary': r.gross_salary,
+            'deductions': r.total_deductions,
+            'net_salary': r.net_salary,
+            'payment_date': r.payment_date, 'status': r.status
+        } for r in records]
     finally:
         db.close()
 
 
 def get_monthly_payroll(month=None, year=None):
-    db = SessionLocal()
+    db = _read()
     try:
         if month is None:
             month = datetime.now().month
@@ -2542,79 +2345,61 @@ def get_monthly_payroll(month=None, year=None):
             year = datetime.now().year
 
         records = db.query(SalaryRecord).filter(
-            SalaryRecord.month == month,
-            SalaryRecord.year == year
+            SalaryRecord.month == month, SalaryRecord.year == year
         ).all()
 
         emp_ids = list({r.employee_id for r in records if r.employee_id})
         emp_map = {}
         if emp_ids:
-            emp_map = {
-                e.id: e for e in db.query(Employee).filter(
-                    Employee.id.in_(emp_ids)
-                ).all()
-            }
+            emp_map = {e.id: e for e in db.query(Employee).filter(
+                Employee.id.in_(emp_ids)
+            ).all()}
 
         payroll = []
-        total_gross = 0
-        total_deductions = 0
-        total_net = 0
-
-        for record in records:
-            employee = emp_map.get(record.employee_id)
-
+        tg = td = tn = 0
+        for r in records:
+            e = emp_map.get(r.employee_id)
             payroll.append({
-                'employee_code': employee.employee_code if employee else '-',
-                'employee_name': employee.full_name if employee else '-',
-                'job_title': employee.job_title if employee else '-',
-                'department': employee.department if employee else '-',
-                'basic_salary': record.basic_salary,
-                'allowances': record.allowances,
-                'overtime': record.overtime,
-                'bonus': record.bonus,
-                'gross_salary': record.gross_salary,
-                'social_insurance': record.social_insurance,
-                'tax': record.tax,
-                'other_deductions': record.other_deductions,
-                'total_deductions': record.total_deductions,
-                'net_salary': record.net_salary,
-                'status': record.status
+                'employee_code': e.employee_code if e else '-',
+                'employee_name': e.full_name if e else '-',
+                'job_title': e.job_title if e else '-',
+                'department': e.department if e else '-',
+                'basic_salary': r.basic_salary, 'allowances': r.allowances,
+                'overtime': r.overtime, 'bonus': r.bonus,
+                'gross_salary': r.gross_salary,
+                'social_insurance': r.social_insurance, 'tax': r.tax,
+                'other_deductions': r.other_deductions,
+                'total_deductions': r.total_deductions,
+                'net_salary': r.net_salary, 'status': r.status
             })
-
-            total_gross += record.gross_salary
-            total_deductions += record.total_deductions
-            total_net += record.net_salary
+            tg += r.gross_salary
+            td += r.total_deductions
+            tn += r.net_salary
 
         return {
             'payroll': payroll,
-            'total_gross': total_gross,
-            'total_deductions': total_deductions,
-            'total_net': total_net,
-            'month': month,
-            'year': year
+            'total_gross': tg, 'total_deductions': td, 'total_net': tn,
+            'month': month, 'year': year
         }
     finally:
         db.close()
 
 
 def get_employees_summary():
-    db = SessionLocal()
+    db = _read()
     try:
         employees = db.query(Employee).all()
-
-        active_count = len([e for e in employees if e.status == EmploymentStatus.ACTIVE])
-        total_salaries = sum(e.basic_salary + e.allowances for e in employees if e.status == EmploymentStatus.ACTIVE)
+        active = [e for e in employees if e.status == EmploymentStatus.ACTIVE]
+        total_salaries = sum(e.basic_salary + e.allowances for e in active)
 
         departments = {}
         for emp in employees:
             if emp.department:
-                if emp.department not in departments:
-                    departments[emp.department] = 0
-                departments[emp.department] += 1
+                departments[emp.department] = departments.get(emp.department, 0) + 1
 
         return {
             'total_employees': len(employees),
-            'active_employees': active_count,
+            'active_employees': len(active),
             'total_monthly_salaries': total_salaries,
             'departments': departments
         }
@@ -2622,12 +2407,11 @@ def get_employees_summary():
         db.close()
 
 
-# ==========================================
-# 22. دوال التقارير المالية المتقدمة
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  22. التقارير المالية
+# ═══════════════════════════════════════════════════════
 def get_income_statement(start_date, end_date):
-    """قائمة الدخل"""
-    db = SessionLocal()
+    db = _read()
     try:
         revenue = db.query(func.sum(models.InvoiceLine.total)).join(
             models.Invoice
@@ -2647,109 +2431,62 @@ def get_income_statement(start_date, end_date):
             models.Invoice.date <= end_date
         ).scalar() or 0.0
 
-        gross_profit = revenue - cogs
+        gp = revenue - cogs
 
-        operating_expenses = db.query(func.sum(Expense.amount)).filter(
-            Expense.date >= start_date,
-            Expense.date <= end_date
+        op_exp = db.query(func.sum(Expense.amount)).filter(
+            Expense.date >= start_date, Expense.date <= end_date
         ).scalar() or 0.0
 
-        salary_expenses = db.query(func.sum(SalaryRecord.gross_salary)).filter(
+        sal_exp = db.query(func.sum(SalaryRecord.gross_salary)).filter(
             SalaryRecord.payment_date >= start_date,
             SalaryRecord.payment_date <= end_date
         ).scalar() or 0.0
 
-        depreciation_expenses = db.query(func.sum(DepreciationRecord.depreciation_amount)).filter(
+        dep_exp = db.query(func.sum(DepreciationRecord.depreciation_amount)).filter(
             DepreciationRecord.date >= start_date,
             DepreciationRecord.date <= end_date
         ).scalar() or 0.0
 
-        total_expenses = operating_expenses + salary_expenses + depreciation_expenses
-        net_profit = gross_profit - total_expenses
+        total_exp = op_exp + sal_exp + dep_exp
+        np_ = gp - total_exp
 
         return {
-            'revenue': revenue,
-            'cogs': cogs,
-            'gross_profit': gross_profit,
-            'operating_expenses': operating_expenses,
-            'salary_expenses': salary_expenses,
-            'depreciation_expenses': depreciation_expenses,
-            'total_expenses': total_expenses,
-            'net_profit': net_profit,
-            'gross_margin': (gross_profit / revenue * 100) if revenue > 0 else 0,
-            'net_margin': (net_profit / revenue * 100) if revenue > 0 else 0
+            'revenue': revenue, 'cogs': cogs, 'gross_profit': gp,
+            'operating_expenses': op_exp, 'salary_expenses': sal_exp,
+            'depreciation_expenses': dep_exp, 'total_expenses': total_exp,
+            'net_profit': np_,
+            'gross_margin': (gp / revenue * 100) if revenue > 0 else 0,
+            'net_margin': (np_ / revenue * 100) if revenue > 0 else 0
         }
     finally:
         db.close()
 
 
 def get_balance_sheet(as_of_date):
-    """الميزانية العمومية"""
-    db = SessionLocal()
+    db = _read()
     try:
-        assets = {}
-        asset_accounts = db.query(models.Account).filter(models.Account.type == AccountType.ASSET).all()
-        for acc in asset_accounts:
-            if acc.parent_id is None:
-                continue
+        def balance_for_type(acc_type, is_asset=True):
+            result = {}
+            accounts = db.query(models.Account).filter(models.Account.type == acc_type).all()
+            for acc in accounts:
+                if acc.parent_id is None:
+                    continue
+                d = db.query(func.sum(models.JournalLine.debit)).filter(
+                    models.JournalLine.account_id == acc.id,
+                    models.JournalEntry.date <= as_of_date
+                ).join(models.JournalEntry).scalar() or 0.0
+                c = db.query(func.sum(models.JournalLine.credit)).filter(
+                    models.JournalLine.account_id == acc.id,
+                    models.JournalEntry.date <= as_of_date
+                ).join(models.JournalEntry).scalar() or 0.0
+                b = (d - c) if is_asset else (c - d)
+                if b > 0:
+                    result[acc.name] = b
+            return result
 
-            debit = db.query(func.sum(models.JournalLine.debit)).filter(
-                models.JournalLine.account_id == acc.id,
-                models.JournalEntry.date <= as_of_date
-            ).join(models.JournalEntry).scalar() or 0.0
-
-            credit = db.query(func.sum(models.JournalLine.credit)).filter(
-                models.JournalLine.account_id == acc.id,
-                models.JournalEntry.date <= as_of_date
-            ).join(models.JournalEntry).scalar() or 0.0
-
-            balance = debit - credit
-            if balance > 0:
-                assets[acc.name] = balance
-
-        total_assets = sum(assets.values())
-
-        liabilities = {}
-        liability_accounts = db.query(models.Account).filter(models.Account.type == AccountType.LIABILITY).all()
-        for acc in liability_accounts:
-            if acc.parent_id is None:
-                continue
-
-            debit = db.query(func.sum(models.JournalLine.debit)).filter(
-                models.JournalLine.account_id == acc.id,
-                models.JournalEntry.date <= as_of_date
-            ).join(models.JournalEntry).scalar() or 0.0
-
-            credit = db.query(func.sum(models.JournalLine.credit)).filter(
-                models.JournalLine.account_id == acc.id,
-                models.JournalEntry.date <= as_of_date
-            ).join(models.JournalEntry).scalar() or 0.0
-
-            balance = credit - debit
-            if balance > 0:
-                liabilities[acc.name] = balance
-
-        total_liabilities = sum(liabilities.values())
-
-        equity = {}
-        equity_accounts = db.query(models.Account).filter(models.Account.type == AccountType.EQUITY).all()
-        for acc in equity_accounts:
-            if acc.parent_id is None:
-                continue
-
-            debit = db.query(func.sum(models.JournalLine.debit)).filter(
-                models.JournalLine.account_id == acc.id,
-                models.JournalEntry.date <= as_of_date
-            ).join(models.JournalEntry).scalar() or 0.0
-
-            credit = db.query(func.sum(models.JournalLine.credit)).filter(
-                models.JournalLine.account_id == acc.id,
-                models.JournalEntry.date <= as_of_date
-            ).join(models.JournalEntry).scalar() or 0.0
-
-            balance = credit - debit
-            if balance > 0:
-                equity[acc.name] = balance
+        assets = balance_for_type(AccountType.ASSET, True)
+        liabilities = balance_for_type(AccountType.LIABILITY, False)
+        equity = balance_for_type(AccountType.EQUITY, False)
 
         revenue = db.query(func.sum(models.InvoiceLine.total)).join(
             models.Invoice
@@ -2763,35 +2500,26 @@ def get_balance_sheet(as_of_date):
             Expense.date <= as_of_date
         ).scalar() or 0.0
 
-        retained_earnings = revenue - expenses
-        equity['الأرباح المحتجزة'] = retained_earnings
-
-        total_equity = sum(equity.values())
+        equity['الأرباح المحتجزة'] = revenue - expenses
 
         return {
-            'assets': assets,
-            'total_assets': total_assets,
-            'liabilities': liabilities,
-            'total_liabilities': total_liabilities,
-            'equity': equity,
-            'total_equity': total_equity
+            'assets': assets, 'total_assets': sum(assets.values()),
+            'liabilities': liabilities, 'total_liabilities': sum(liabilities.values()),
+            'equity': equity, 'total_equity': sum(equity.values())
         }
     finally:
         db.close()
 
 
 def get_trial_balance(start_date, end_date):
-    """ميزان المراجعة"""
-    db = SessionLocal()
+    db = _read()
     try:
         accounts = db.query(models.Account).all()
 
         debit_agg = db.query(
             models.JournalLine.account_id,
             func.sum(models.JournalLine.debit).label('total')
-        ).join(
-            models.JournalEntry
-        ).filter(
+        ).join(models.JournalEntry).filter(
             models.JournalEntry.date >= start_date,
             models.JournalEntry.date <= end_date
         ).group_by(models.JournalLine.account_id).all()
@@ -2800,69 +2528,44 @@ def get_trial_balance(start_date, end_date):
         credit_agg = db.query(
             models.JournalLine.account_id,
             func.sum(models.JournalLine.credit).label('total')
-        ).join(
-            models.JournalEntry
-        ).filter(
+        ).join(models.JournalEntry).filter(
             models.JournalEntry.date >= start_date,
             models.JournalEntry.date <= end_date
         ).group_by(models.JournalLine.account_id).all()
         credit_map = {aid: float(t or 0) for aid, t in credit_agg}
 
-        trial_balance = []
-        total_debit = 0
-        total_credit = 0
-
+        tb = []
+        td = tc = 0
         for acc in accounts:
-            debit = debit_map.get(acc.id, 0.0)
-            credit = credit_map.get(acc.id, 0.0)
-
-            if debit > 0 or credit > 0:
-                balance = debit - credit
-                trial_balance.append({
-                    'account_code': acc.code,
-                    'account_name': acc.name,
-                    'debit': debit,
-                    'credit': credit,
-                    'balance': balance,
-                    'type': acc.type.value
+            d = debit_map.get(acc.id, 0.0)
+            c = credit_map.get(acc.id, 0.0)
+            if d > 0 or c > 0:
+                tb.append({
+                    'account_code': acc.code, 'account_name': acc.name,
+                    'debit': d, 'credit': c, 'balance': d - c, 'type': acc.type.value
                 })
+                td += d
+                tc += c
 
-                total_debit += debit
-                total_credit += credit
-
-        return {
-            'accounts': trial_balance,
-            'total_debit': total_debit,
-            'total_credit': total_credit,
-            'difference': total_debit - total_credit
-        }
+        return {'accounts': tb, 'total_debit': td, 'total_credit': tc, 'difference': td - tc}
     finally:
         db.close()
 
 
 def get_cash_flow_statement(start_date, end_date):
-    """قائمة التدفقات النقدية"""
-    db = SessionLocal()
+    db = _read()
     try:
-        cash_from_operations = db.query(
-            func.sum(models.Payment.amount)
-        ).filter(
+        cfo = db.query(func.sum(models.Payment.amount)).filter(
             models.Payment.payment_type == 'receipt',
-            models.Payment.date >= start_date,
-            models.Payment.date <= end_date
+            models.Payment.date >= start_date, models.Payment.date <= end_date
         ).scalar() or 0.0
 
-        cash_to_operations = db.query(
-            func.sum(models.Payment.amount)
-        ).filter(
+        cto = db.query(func.sum(models.Payment.amount)).filter(
             models.Payment.payment_type == 'payment',
-            models.Payment.date >= start_date,
-            models.Payment.date <= end_date
+            models.Payment.date >= start_date, models.Payment.date <= end_date
         ).scalar() or 0.0
 
-        cash_from_investing = db.query(
-            func.sum(models.JournalLine.debit)
-        ).filter(
+        cfi = db.query(func.sum(models.JournalLine.debit)).filter(
             models.JournalLine.account_id.in_(
                 db.query(models.Account.id).filter(models.Account.code.like('15%'))
             ),
@@ -2870,9 +2573,7 @@ def get_cash_flow_statement(start_date, end_date):
             models.JournalEntry.date <= end_date
         ).join(models.JournalEntry).scalar() or 0.0
 
-        cash_from_financing = db.query(
-            func.sum(models.JournalLine.credit)
-        ).filter(
+        cff = db.query(func.sum(models.JournalLine.credit)).filter(
             models.JournalLine.account_id.in_(
                 db.query(models.Account.id).filter(models.Account.code.like('23%'))
             ),
@@ -2880,36 +2581,31 @@ def get_cash_flow_statement(start_date, end_date):
             models.JournalEntry.date <= end_date
         ).join(models.JournalEntry).scalar() or 0.0
 
-        net_cash_flow = cash_from_operations - cash_to_operations + cash_from_investing + cash_from_financing
-
         return {
-            'cash_from_operations': cash_from_operations,
-            'cash_to_operations': cash_to_operations,
-            'cash_from_investing': cash_from_investing,
-            'cash_from_financing': cash_from_financing,
-            'net_cash_flow': net_cash_flow
+            'cash_from_operations': cfo, 'cash_to_operations': cto,
+            'cash_from_investing': cfi, 'cash_from_financing': cff,
+            'net_cash_flow': cfo - cto + cfi + cff
         }
     finally:
         db.close()
 
 
 def get_financial_ratios(start_date, end_date):
-    """النسب المالية"""
-    db = SessionLocal()
+    db = _read()
     try:
-        current_assets = db.query(func.sum(models.JournalLine.debit)).filter(
+        ca = db.query(func.sum(models.JournalLine.debit)).filter(
             models.JournalLine.account_id.in_(
                 db.query(models.Account.id).filter(models.Account.code.like('11%'))
             )
         ).scalar() or 0.0
 
-        current_liabilities = db.query(func.sum(models.JournalLine.credit)).filter(
+        cl = db.query(func.sum(models.JournalLine.credit)).filter(
             models.JournalLine.account_id.in_(
                 db.query(models.Account.id).filter(models.Account.code.like('21%'))
             )
         ).scalar() or 0.0
 
-        current_ratio = current_assets / current_liabilities if current_liabilities > 0 else 0
+        cr = ca / cl if cl > 0 else 0
 
         revenue = db.query(func.sum(models.InvoiceLine.total)).join(
             models.Invoice
@@ -2920,69 +2616,65 @@ def get_financial_ratios(start_date, end_date):
             models.Invoice.date <= end_date
         ).scalar() or 0.0
 
-        net_profit = db.query(func.sum(models.InvoiceLine.total - models.InvoiceLine.quantity * models.InvoiceLine.cost_price)).join(
-            models.Invoice
-        ).filter(
+        np_ = db.query(func.sum(
+            models.InvoiceLine.total - models.InvoiceLine.quantity * models.InvoiceLine.cost_price
+        )).join(models.Invoice).filter(
             models.Invoice.type == 'sale',
             models.Invoice.status != 'cancelled',
             models.Invoice.date >= start_date,
             models.Invoice.date <= end_date
         ).scalar() or 0.0
 
-        profit_margin = (net_profit / revenue * 100) if revenue > 0 else 0
+        pm = (np_ / revenue * 100) if revenue > 0 else 0
 
         inventory = db.query(func.sum(StockLevel.quantity * models.Item.cost_price)).join(
             models.Item
         ).scalar() or 0.0
 
-        inventory_turnover = (db.query(func.sum(models.InvoiceLine.quantity * models.InvoiceLine.cost_price)).join(
-            models.Invoice
-        ).filter(
+        cogs = db.query(func.sum(
+            models.InvoiceLine.quantity * models.InvoiceLine.cost_price
+        )).join(models.Invoice).filter(
             models.Invoice.type == 'sale',
             models.Invoice.status != 'cancelled',
             models.Invoice.date >= start_date,
             models.Invoice.date <= end_date
-        ).scalar() or 0.0) / inventory if inventory > 0 else 0
+        ).scalar() or 0.0
+
+        it = cogs / inventory if inventory > 0 else 0
 
         return {
-            'current_ratio': current_ratio,
-            'profit_margin': profit_margin,
-            'inventory_turnover': inventory_turnover,
-            'revenue': revenue,
-            'net_profit': net_profit
+            'current_ratio': cr, 'profit_margin': pm,
+            'inventory_turnover': it, 'revenue': revenue, 'net_profit': np_
         }
     finally:
         db.close()
 
 
 def create_budget(account_id, month, year, budgeted_amount, notes=None, created_by=None):
-    """إنشاء موازنة"""
-    db = SessionLocal()
+    db = _write()
     try:
         existing = db.query(Budget).filter(
             Budget.account_id == account_id,
-            Budget.month == month,
-            Budget.year == year
+            Budget.month == month, Budget.year == year
         ).first()
 
         if existing:
             existing.budgeted_amount = budgeted_amount
             existing.notes = notes
             db.commit()
+            _after_write()
             return existing
 
         budget = Budget(
-            account_id=account_id,
-            month=month,
-            year=year,
-            budgeted_amount=budgeted_amount,
-            notes=notes,
-            created_by=created_by
+            account_id=account_id, month=month, year=year,
+            budgeted_amount=budgeted_amount, notes=notes, created_by=created_by
         )
         db.add(budget)
         db.commit()
+        db.refresh(budget)
+        _after_write()
         return budget
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -2990,12 +2682,10 @@ def create_budget(account_id, month, year, budgeted_amount, notes=None, created_
 
 
 def get_budget_vs_actual(month, year):
-    """مقارنة الموازنة بالفعلي — متوافقة مع PostgreSQL."""
-    db = SessionLocal()
+    db = _read()
     try:
         budgets = db.query(Budget).filter(
-            Budget.month == month,
-            Budget.year == year,
+            Budget.month == month, Budget.year == year
         ).all()
 
         comparison = []
@@ -3016,48 +2706,43 @@ def get_budget_vs_actual(month, year):
             ).join(models.JournalEntry).scalar() or 0.0
 
             variance = budget.budgeted_amount - actual
-            variance_percentage = (variance / budget.budgeted_amount * 100) if budget.budgeted_amount > 0 else 0
+            vp = (variance / budget.budgeted_amount * 100) if budget.budgeted_amount > 0 else 0
 
             comparison.append({
                 'account_code': account.code if account else '-',
                 'account_name': account.name if account else '-',
-                'budgeted': budget.budgeted_amount,
-                'actual': actual,
-                'variance': variance,
-                'variance_percentage': variance_percentage,
+                'budgeted': budget.budgeted_amount, 'actual': actual,
+                'variance': variance, 'variance_percentage': vp,
             })
         return comparison
     finally:
         db.close()
 
 
-# ==========================================
-# 23. دوال الإغلاق المحاسبي
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  23. الإغلاق المحاسبي
+# ═══════════════════════════════════════════════════════
 def create_accounting_period(period_name, start_date, end_date, is_fiscal_year=False, created_by=None):
-    """إنشاء فترة محاسبية جديدة"""
-    db = SessionLocal()
+    db = _write()
     try:
         existing = db.query(AccountingPeriod).filter(
             AccountingPeriod.start_date <= end_date,
             AccountingPeriod.end_date >= start_date
         ).first()
-
         if existing:
             raise ValueError(f"توجد فترة محاسبية متداخلة: '{existing.period_name}'")
 
         period = AccountingPeriod(
-            period_name=period_name,
-            start_date=start_date,
-            end_date=end_date,
-            is_fiscal_year=is_fiscal_year,
-            status=PeriodStatus.OPEN,
+            period_name=period_name, start_date=start_date, end_date=end_date,
+            is_fiscal_year=is_fiscal_year, status=PeriodStatus.OPEN,
             created_by=created_by
         )
         db.add(period)
         db.commit()
+        db.refresh(period)
+        _after_write()
         return period
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -3065,47 +2750,42 @@ def create_accounting_period(period_name, start_date, end_date, is_fiscal_year=F
 
 
 def get_period_for_date(date):
-    """الحصول على الفترة المحاسبية لتاريخ معين"""
-    db = SessionLocal()
+    db = _read()
     try:
-        period = db.query(AccountingPeriod).filter(
+        return db.query(AccountingPeriod).filter(
             AccountingPeriod.start_date <= date,
             AccountingPeriod.end_date >= date
         ).first()
-        return period
     finally:
         db.close()
 
 
 def get_all_periods():
-    """الحصول على جميع الفترات المحاسبية"""
-    db = SessionLocal()
+    db = _read()
     try:
-        periods = db.query(AccountingPeriod).order_by(AccountingPeriod.start_date.desc()).all()
-        return periods
+        return db.query(AccountingPeriod).order_by(
+            AccountingPeriod.start_date.desc()
+        ).all()
     finally:
         db.close()
 
 
 def close_accounting_period(period_id, closing_notes=None, closed_by=None):
-    """إغلاق فترة محاسبية"""
-    db = SessionLocal()
+    db = _write()
     try:
         period = db.query(AccountingPeriod).filter(AccountingPeriod.id == period_id).first()
         if not period:
             raise ValueError("الفترة المحاسبية غير موجودة!")
-
         if period.status == PeriodStatus.CLOSED:
             raise ValueError("هذه الفترة مغلقة بالفعل!")
 
-        pending_invoices = db.query(models.Invoice).filter(
+        pending = db.query(models.Invoice).filter(
             models.Invoice.date >= period.start_date,
             models.Invoice.date <= period.end_date,
             models.Invoice.status == 'pending'
         ).count()
-
-        if pending_invoices > 0:
-            raise ValueError(f"يوجد {pending_invoices} فاتورة معلقة في هذه الفترة! يجب تسويتها أولاً.")
+        if pending > 0:
+            raise ValueError(f"يوجد {pending} فاتورة معلقة في هذه الفترة! يجب تسويتها أولاً.")
 
         revenue = db.query(func.sum(models.InvoiceLine.total)).join(
             models.Invoice
@@ -3121,62 +2801,35 @@ def close_accounting_period(period_id, closing_notes=None, closed_by=None):
             Expense.date <= period.end_date
         ).scalar() or 0.0
 
-        net_profit = revenue - expenses
+        np_ = revenue - expenses
 
         closing_entry = models.JournalEntry(
             date=period.end_date,
             description=f"إغلاق فترة '{period.period_name}' - ترحيل صافي الربح/الخسارة",
-            reference_type="period_closing",
-            reference_id=period_id,
-            created_by=closed_by,
-            period_id=period_id
+            reference_type="period_closing", reference_id=period_id,
+            created_by=closed_by, period_id=period_id
         )
         db.add(closing_entry)
         db.flush()
 
-        retained_earnings_account = db.query(models.Account).filter(
-            models.Account.code == "3101"
-        ).first()
-
-        if not retained_earnings_account:
+        re_acc = db.query(models.Account).filter(models.Account.code == "3101").first()
+        if not re_acc:
             raise ValueError("حساب الأرباح المحتجزة غير موجود!")
 
-        if net_profit > 0:
-            profit_loss_account = db.query(models.Account).filter(
-                models.Account.code == "3201"
-            ).first()
+        pl_acc = db.query(models.Account).filter(models.Account.code == "3201").first()
 
-            if profit_loss_account:
-                db.add(models.JournalLine(
-                    entry_id=closing_entry.id,
-                    account_id=profit_loss_account.id,
-                    debit=net_profit,
-                    credit=0.0
-                ))
-                db.add(models.JournalLine(
-                    entry_id=closing_entry.id,
-                    account_id=retained_earnings_account.id,
-                    debit=0.0,
-                    credit=net_profit
-                ))
+        if np_ > 0:
+            if pl_acc:
+                db.add(models.JournalLine(entry_id=closing_entry.id, account_id=pl_acc.id,
+                                           debit=np_, credit=0.0))
+                db.add(models.JournalLine(entry_id=closing_entry.id, account_id=re_acc.id,
+                                           debit=0.0, credit=np_))
         else:
-            profit_loss_account = db.query(models.Account).filter(
-                models.Account.code == "3201"
-            ).first()
-
-            if profit_loss_account:
-                db.add(models.JournalLine(
-                    entry_id=closing_entry.id,
-                    account_id=retained_earnings_account.id,
-                    debit=abs(net_profit),
-                    credit=0.0
-                ))
-                db.add(models.JournalLine(
-                    entry_id=closing_entry.id,
-                    account_id=profit_loss_account.id,
-                    debit=0.0,
-                    credit=abs(net_profit)
-                ))
+            if pl_acc:
+                db.add(models.JournalLine(entry_id=closing_entry.id, account_id=re_acc.id,
+                                           debit=abs(np_), credit=0.0))
+                db.add(models.JournalLine(entry_id=closing_entry.id, account_id=pl_acc.id,
+                                           debit=0.0, credit=abs(np_)))
 
         period.status = PeriodStatus.CLOSED
         period.closing_date = datetime.now()
@@ -3184,14 +2837,9 @@ def close_accounting_period(period_id, closing_notes=None, closed_by=None):
         period.closed_by = closed_by
 
         db.commit()
-
-        return {
-            'period': period,
-            'net_profit': net_profit,
-            'revenue': revenue,
-            'expenses': expenses
-        }
-    except Exception as e:
+        _after_write()
+        return {'period': period, 'net_profit': np_, 'revenue': revenue, 'expenses': expenses}
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -3199,13 +2847,11 @@ def close_accounting_period(period_id, closing_notes=None, closed_by=None):
 
 
 def reopen_accounting_period(period_id, reopened_by=None):
-    """إعادة فتح فترة محاسبية مغلقة"""
-    db = SessionLocal()
+    db = _write()
     try:
         period = db.query(AccountingPeriod).filter(AccountingPeriod.id == period_id).first()
         if not period:
             raise ValueError("الفترة المحاسبية غير موجودة!")
-
         if period.status == PeriodStatus.OPEN:
             raise ValueError("هذه الفترة مفتوحة بالفعل!")
 
@@ -3226,8 +2872,9 @@ def reopen_accounting_period(period_id, reopened_by=None):
         period.closed_by = None
 
         db.commit()
+        _after_write()
         return period
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -3235,56 +2882,50 @@ def reopen_accounting_period(period_id, reopened_by=None):
 
 
 def get_period_summary(period_id):
-    """ملخص الفترة المحاسبية"""
-    db = SessionLocal()
+    db = _read()
     try:
         period = db.query(AccountingPeriod).filter(AccountingPeriod.id == period_id).first()
         if not period:
             return None
 
-        invoices_count = db.query(models.Invoice).filter(
+        inv_count = db.query(models.Invoice).filter(
             models.Invoice.date >= period.start_date,
             models.Invoice.date <= period.end_date
         ).count()
 
-        total_sales = db.query(func.sum(models.Invoice.net_amount)).filter(
+        ts = db.query(func.sum(models.Invoice.net_amount)).filter(
             models.Invoice.type == 'sale',
             models.Invoice.status != 'cancelled',
             models.Invoice.date >= period.start_date,
             models.Invoice.date <= period.end_date
         ).scalar() or 0.0
 
-        total_purchases = db.query(func.sum(models.Invoice.net_amount)).filter(
+        tp = db.query(func.sum(models.Invoice.net_amount)).filter(
             models.Invoice.type == 'purchase',
             models.Invoice.status != 'cancelled',
             models.Invoice.date >= period.start_date,
             models.Invoice.date <= period.end_date
         ).scalar() or 0.0
 
-        total_expenses = db.query(func.sum(Expense.amount)).filter(
-            Expense.date >= period.start_date,
-            Expense.date <= period.end_date
+        te = db.query(func.sum(Expense.amount)).filter(
+            Expense.date >= period.start_date, Expense.date <= period.end_date
         ).scalar() or 0.0
 
-        journal_entries_count = db.query(models.JournalEntry).filter(
+        je_count = db.query(models.JournalEntry).filter(
             models.JournalEntry.period_id == period_id
         ).count()
 
         return {
-            'period': period,
-            'invoices_count': invoices_count,
-            'total_sales': total_sales,
-            'total_purchases': total_purchases,
-            'total_expenses': total_expenses,
-            'journal_entries_count': journal_entries_count
+            'period': period, 'invoices_count': inv_count,
+            'total_sales': ts, 'total_purchases': tp,
+            'total_expenses': te, 'journal_entries_count': je_count
         }
     finally:
         db.close()
 
 
 def check_period_integrity(period_id):
-    """التحقق من سلامة الفترة المحاسبية قبل الإغلاق"""
-    db = SessionLocal()
+    db = _read()
     try:
         period = db.query(AccountingPeriod).filter(AccountingPeriod.id == period_id).first()
         if not period:
@@ -3292,92 +2933,77 @@ def check_period_integrity(period_id):
 
         issues = []
 
-        pending_invoices = db.query(models.Invoice).filter(
+        pending = db.query(models.Invoice).filter(
             models.Invoice.date >= period.start_date,
             models.Invoice.date <= period.end_date,
             models.Invoice.status == 'pending'
         ).count()
-
-        if pending_invoices > 0:
-            issues.append(f"⚠️ يوجد {pending_invoices} فاتورة معلقة")
+        if pending > 0:
+            issues.append(f"⚠️ يوجد {pending} فاتورة معلقة")
 
         entries = db.query(models.JournalEntry).filter(
             models.JournalEntry.period_id == period_id
         ).all()
-
-        unbalanced_entries = 0
+        unbalanced = 0
         for entry in entries:
             lines = db.query(models.JournalLine).filter(
                 models.JournalLine.entry_id == entry.id
             ).all()
+            td = sum(l.debit for l in lines)
+            tc = sum(l.credit for l in lines)
+            if abs(td - tc) > 0.01:
+                unbalanced += 1
+        if unbalanced > 0:
+            issues.append(f"⚠️ يوجد {unbalanced} قيد غير متوازن")
 
-            total_debit = sum(line.debit for line in lines)
-            total_credit = sum(line.credit for line in lines)
+        # مخزون منخفض
+        rows = db.query(
+            models.InventoryMovement.item_id,
+            func.sum(
+                case(
+                    (models.InventoryMovement.type == 'in', models.InventoryMovement.quantity),
+                    else_=-models.InventoryMovement.quantity
+                )
+            ).label('balance')
+        ).group_by(models.InventoryMovement.item_id).all()
+        stock_map = {iid: float(b or 0) for iid, b in rows}
 
-            if abs(total_debit - total_credit) > 0.01:
-                unbalanced_entries += 1
-
-        if unbalanced_entries > 0:
-            issues.append(f"⚠️ يوجد {unbalanced_entries} قيد غير متوازن")
-
-        low_stock_items = db.query(models.Item).filter(
-            models.Item.is_kit == False
-        ).all()
-
-        low_stock_count = 0
-        for item in low_stock_items:
-            movements = db.query(models.InventoryMovement).filter(
-                models.InventoryMovement.item_id == item.id,
-                models.InventoryMovement.date >= period.start_date,
-                models.InventoryMovement.date <= period.end_date
-            ).all()
-
-            stock_in = sum(m.quantity for m in movements if m.type == 'in')
-            stock_out = sum(m.quantity for m in movements if m.type == 'out')
-            current_stock = stock_in - stock_out
-
-            if current_stock <= item.min_stock:
-                low_stock_count += 1
-
-        if low_stock_count > 0:
-            issues.append(f"⚠️ يوجد {low_stock_count} صنف تحت الحد الأدنى للمخزون")
+        items = db.query(models.Item).filter(models.Item.is_kit == False).all()
+        low = sum(1 for it in items if stock_map.get(it.id, 0.0) <= (it.min_stock or 0))
+        if low > 0:
+            issues.append(f"⚠️ يوجد {low} صنف تحت الحد الأدنى للمخزون")
 
         return {
-            'period': period,
-            'issues': issues,
+            'period': period, 'issues': issues,
             'is_ready_to_close': len(issues) == 0
         }
     finally:
         db.close()
 
 
-# ==========================================
-# 24. دوال إدارة مراكز التكلفة
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  24. مراكز التكلفة
+# ═══════════════════════════════════════════════════════
 def create_cost_center(code, name, description=None, manager_name=None,
-                       parent_id=None, budget_limit=None, notes=None, created_by=None):
-    """إنشاء مركز تكلفة جديد"""
-    db = SessionLocal()
+                        parent_id=None, budget_limit=None, notes=None, created_by=None):
+    db = _write()
     try:
         existing = db.query(CostCenter).filter(CostCenter.code == code).first()
         if existing:
             raise ValueError(f"كود مركز التكلفة '{code}' موجود مسبقاً!")
 
-        cost_center = CostCenter(
-            code=code,
-            name=name,
-            description=description,
-            manager_name=manager_name,
-            parent_id=parent_id,
-            budget_limit=budget_limit,
-            notes=notes,
-            is_active=True,
-            created_by=created_by
+        cc = CostCenter(
+            code=code, name=name, description=description,
+            manager_name=manager_name, parent_id=parent_id,
+            budget_limit=budget_limit, notes=notes,
+            is_active=True, created_by=created_by
         )
-        db.add(cost_center)
+        db.add(cc)
         db.commit()
-        return cost_center
-    except Exception as e:
+        db.refresh(cc)
+        _after_write()
+        return cc
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -3385,98 +3011,73 @@ def create_cost_center(code, name, description=None, manager_name=None,
 
 
 def get_cost_centers_tree():
-    """الحصول على شجرة مراكز التكلفة"""
-    db = SessionLocal()
+    db = _read()
     try:
         centers = db.query(CostCenter).filter(CostCenter.is_active == True).all()
-
         tree = []
-        for center in centers:
-            if center.parent_id is None:
-                children = [c for c in centers if c.parent_id == center.id]
+        for c in centers:
+            if c.parent_id is None:
+                children = [x for x in centers if x.parent_id == c.id]
                 tree.append({
-                    'id': center.id,
-                    'code': center.code,
-                    'name': center.name,
-                    'manager': center.manager_name,
-                    'budget_limit': center.budget_limit,
-                    'children': [
-                        {
-                            'id': c.id,
-                            'code': c.code,
-                            'name': c.name,
-                            'manager': c.manager_name,
-                            'budget_limit': c.budget_limit
-                        } for c in children
-                    ]
+                    'id': c.id, 'code': c.code, 'name': c.name,
+                    'manager': c.manager_name, 'budget_limit': c.budget_limit,
+                    'children': [{
+                        'id': ch.id, 'code': ch.code, 'name': ch.name,
+                        'manager': ch.manager_name, 'budget_limit': ch.budget_limit
+                    } for ch in children]
                 })
-
         return tree
     finally:
         db.close()
 
 
 def allocate_cost_to_center(cost_center_id, account_id, amount, description,
-                            allocation_date=None, reference_type=None, reference_id=None, created_by=None):
-    """تخصيص تكلفة لمركز تكلفة"""
-    db = SessionLocal()
+                             allocation_date=None, reference_type=None,
+                             reference_id=None, created_by=None):
+    db = _write()
     try:
-        cost_center = db.query(CostCenter).filter(CostCenter.id == cost_center_id).first()
-        if not cost_center:
+        cc = db.query(CostCenter).filter(CostCenter.id == cost_center_id).first()
+        if not cc:
             raise ValueError("مركز التكلفة غير موجود!")
-
-        if not cost_center.is_active:
+        if not cc.is_active:
             raise ValueError("مركز التكلفة غير نشط!")
 
         if allocation_date is None:
             allocation_date = datetime.now()
-
         check_period_open(allocation_date, entity="تخصيص تكلفة")
 
         transaction = CostCenterTransaction(
-            cost_center_id=cost_center_id,
-            date=allocation_date,
-            description=description,
-            amount=amount,
+            cost_center_id=cost_center_id, date=allocation_date,
+            description=description, amount=amount,
             transaction_type='expense',
-            reference_type=reference_type,
-            reference_id=reference_id,
+            reference_type=reference_type, reference_id=reference_id,
             created_by=created_by
         )
         db.add(transaction)
 
         journal_entry = models.JournalEntry(
             date=allocation_date,
-            description=f"تخصيص تكلفة لـ {cost_center.name}: {description}",
-            reference_type="cost_allocation",
-            reference_id=cost_center_id,
+            description=f"تخصيص تكلفة لـ {cc.name}: {description}",
+            reference_type="cost_allocation", reference_id=cost_center_id,
             created_by=created_by
         )
         db.add(journal_entry)
         db.flush()
 
-        db.add(models.JournalLine(
-            entry_id=journal_entry.id,
-            account_id=account_id,
-            debit=amount,
-            credit=0.0
-        ))
+        db.add(models.JournalLine(entry_id=journal_entry.id, account_id=account_id,
+                                   debit=amount, credit=0.0))
 
-        main_cash_box = db.query(CashBox).filter(CashBox.is_active == True).first()
-        if main_cash_box:
-            db.add(models.JournalLine(
-                entry_id=journal_entry.id,
-                account_id=main_cash_box.account_id,
-                debit=0.0,
-                credit=amount
-            ))
+        cb = db.query(CashBox).filter(CashBox.is_active == True).first()
+        if cb:
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=cb.account_id,
+                                       debit=0.0, credit=amount))
 
         db.flush()
         validate_journal_entry(db, journal_entry.id)
-
         db.commit()
+        _after_write()
         return transaction
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise
     finally:
@@ -3484,141 +3085,111 @@ def allocate_cost_to_center(cost_center_id, account_id, amount, description,
 
 
 def get_cost_center_report(cost_center_id, start_date=None, end_date=None):
-    """تقرير مركز التكلفة"""
-    db = SessionLocal()
+    db = _read()
     try:
-        cost_center = db.query(CostCenter).filter(CostCenter.id == cost_center_id).first()
-        if not cost_center:
+        cc = db.query(CostCenter).filter(CostCenter.id == cost_center_id).first()
+        if not cc:
             return None
 
-        query = db.query(CostCenterTransaction).filter(
+        q = db.query(CostCenterTransaction).filter(
             CostCenterTransaction.cost_center_id == cost_center_id
         )
-
         if start_date:
-            query = query.filter(CostCenterTransaction.date >= start_date)
+            q = q.filter(CostCenterTransaction.date >= start_date)
         if end_date:
-            query = query.filter(CostCenterTransaction.date <= end_date)
+            q = q.filter(CostCenterTransaction.date <= end_date)
 
-        transactions = query.order_by(CostCenterTransaction.date.desc()).all()
-
-        total_expenses = sum(t.amount for t in transactions if t.transaction_type == 'expense')
-        total_revenues = sum(t.amount for t in transactions if t.transaction_type == 'revenue')
-        net_amount = total_revenues - total_expenses
+        transactions = q.order_by(CostCenterTransaction.date.desc()).all()
+        te = sum(t.amount for t in transactions if t.transaction_type == 'expense')
+        tr = sum(t.amount for t in transactions if t.transaction_type == 'revenue')
 
         children = db.query(CostCenter).filter(CostCenter.parent_id == cost_center_id).all()
         children_data = []
         for child in children:
-            child_transactions = db.query(CostCenterTransaction).filter(
+            cts = db.query(CostCenterTransaction).filter(
                 CostCenterTransaction.cost_center_id == child.id
             ).all()
-            child_total = sum(t.amount for t in child_transactions)
             children_data.append({
-                'id': child.id,
-                'name': child.name,
-                'total': child_total
+                'id': child.id, 'name': child.name,
+                'total': sum(t.amount for t in cts)
             })
 
         return {
-            'cost_center': cost_center,
-            'transactions': transactions,
-            'total_expenses': total_expenses,
-            'total_revenues': total_revenues,
-            'net_amount': net_amount,
-            'children': children_data
+            'cost_center': cc, 'transactions': transactions,
+            'total_expenses': te, 'total_revenues': tr,
+            'net_amount': tr - te, 'children': children_data
         }
     finally:
         db.close()
 
 
 def get_all_cost_centers_summary(start_date=None, end_date=None):
-    """ملخص جميع مراكز التكلفة"""
-    db = SessionLocal()
+    db = _read()
     try:
         centers = db.query(CostCenter).filter(CostCenter.is_active == True).all()
-
         summary = []
-        for center in centers:
-            query = db.query(CostCenterTransaction).filter(
-                CostCenterTransaction.cost_center_id == center.id
+        for cc in centers:
+            q = db.query(CostCenterTransaction).filter(
+                CostCenterTransaction.cost_center_id == cc.id
             )
-
             if start_date:
-                query = query.filter(CostCenterTransaction.date >= start_date)
+                q = q.filter(CostCenterTransaction.date >= start_date)
             if end_date:
-                query = query.filter(CostCenterTransaction.date <= end_date)
-
-            transactions = query.all()
-            total = sum(t.amount for t in transactions)
-
+                q = q.filter(CostCenterTransaction.date <= end_date)
+            total = sum(t.amount for t in q.all())
             summary.append({
-                'id': center.id,
-                'code': center.code,
-                'name': center.name,
-                'manager': center.manager_name,
-                'budget_limit': center.budget_limit,
+                'id': cc.id, 'code': cc.code, 'name': cc.name,
+                'manager': cc.manager_name, 'budget_limit': cc.budget_limit,
                 'total_spent': total,
-                'remaining_budget': (center.budget_limit - total) if center.budget_limit else None,
-                'usage_percentage': (total / center.budget_limit * 100) if center.budget_limit and center.budget_limit > 0 else 0
+                'remaining_budget': (cc.budget_limit - total) if cc.budget_limit else None,
+                'usage_percentage': (total / cc.budget_limit * 100) if cc.budget_limit and cc.budget_limit > 0 else 0
             })
-
         return summary
     finally:
         db.close()
 
 
-def transfer_between_cost_centers(from_center_id, to_center_id, amount, description,
-                                   transfer_date=None, created_by=None):
-    """تحويل مبلغ بين مركزي تكلفة"""
-    db = SessionLocal()
+def transfer_between_cost_centers(from_center_id, to_center_id, amount,
+                                   description, transfer_date=None, created_by=None):
+    db = _write()
     try:
         if from_center_id == to_center_id:
             raise ValueError("لا يمكن التحويل بين نفس مركز التكلفة!")
 
-        from_center = db.query(CostCenter).filter(CostCenter.id == from_center_id).first()
-        to_center = db.query(CostCenter).filter(CostCenter.id == to_center_id).first()
-
-        if not from_center or not to_center:
+        fc = db.query(CostCenter).filter(CostCenter.id == from_center_id).first()
+        tc = db.query(CostCenter).filter(CostCenter.id == to_center_id).first()
+        if not fc or not tc:
             raise ValueError("أحد مراكز التكلفة غير موجود!")
 
         if transfer_date is None:
             transfer_date = datetime.now()
 
-        debit_transaction = CostCenterTransaction(
-            cost_center_id=from_center_id,
-            date=transfer_date,
-            description=f"تحويل إلى {to_center.name}: {description}",
-            amount=amount,
-            transaction_type='transfer_out',
-            created_by=created_by
-        )
-        db.add(debit_transaction)
-
-        credit_transaction = CostCenterTransaction(
-            cost_center_id=to_center_id,
-            date=transfer_date,
-            description=f"تحويل من {from_center.name}: {description}",
-            amount=amount,
-            transaction_type='transfer_in',
-            created_by=created_by
-        )
-        db.add(credit_transaction)
+        db.add(CostCenterTransaction(
+            cost_center_id=from_center_id, date=transfer_date,
+            description=f"تحويل إلى {tc.name}: {description}",
+            amount=amount, transaction_type='transfer_out', created_by=created_by
+        ))
+        db.add(CostCenterTransaction(
+            cost_center_id=to_center_id, date=transfer_date,
+            description=f"تحويل من {fc.name}: {description}",
+            amount=amount, transaction_type='transfer_in', created_by=created_by
+        ))
 
         db.commit()
-        return {'from': from_center.name, 'to': to_center.name, 'amount': amount}
-    except Exception as e:
+        _after_write()
+        return {'from': fc.name, 'to': tc.name, 'amount': amount}
+    except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
 
-# ==========================================
-# 25. دوال إدارة تصنيفات المصروفات
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  25. تصنيفات المصروفات
+# ═══════════════════════════════════════════════════════
 def get_expense_categories(include_inactive=False):
-    """يرجع كل تصنيفات المصروفات مرتبة بالاسم."""
-    db = SessionLocal()
+    db = _read()
     try:
         q = db.query(ExpenseCategory)
         if not include_inactive:
@@ -3629,8 +3200,7 @@ def get_expense_categories(include_inactive=False):
 
 
 def get_expense_category_by_id(category_id):
-    """يرجع تصنيف واحد بالمعرف."""
-    db = SessionLocal()
+    db = _read()
     try:
         return db.query(ExpenseCategory).filter(
             ExpenseCategory.id == category_id
@@ -3641,8 +3211,7 @@ def get_expense_category_by_id(category_id):
 
 def update_expense_category(category_id, name=None, description=None,
                              account_id=None, is_active=None):
-    """يعدل تصنيف مصروف موجود."""
-    db = SessionLocal()
+    db = _write()
     try:
         cat = db.query(ExpenseCategory).filter(ExpenseCategory.id == category_id).first()
         if not cat:
@@ -3654,16 +3223,14 @@ def update_expense_category(category_id, name=None, description=None,
                 raise ValueError("اسم التصنيف مطلوب!")
             existing = db.query(ExpenseCategory).filter(
                 ExpenseCategory.name == name,
-                ExpenseCategory.id != category_id,
+                ExpenseCategory.id != category_id
             ).first()
             if existing:
                 raise ValueError(f"يوجد تصنيف آخر باسم '{name}'!")
             cat.name = name
 
             if cat.account_id:
-                acc = db.query(models.Account).filter(
-                    models.Account.id == cat.account_id
-                ).first()
+                acc = db.query(models.Account).filter(models.Account.id == cat.account_id).first()
                 if acc:
                     acc.name = name
 
@@ -3671,9 +3238,7 @@ def update_expense_category(category_id, name=None, description=None,
             cat.description = description.strip() if description else None
 
         if account_id is not None:
-            acc = db.query(models.Account).filter(
-                models.Account.id == account_id
-            ).first()
+            acc = db.query(models.Account).filter(models.Account.id == account_id).first()
             if not acc:
                 raise ValueError("الحساب غير موجود!")
             cat.account_id = account_id
@@ -3682,6 +3247,7 @@ def update_expense_category(category_id, name=None, description=None,
             cat.is_active = bool(is_active)
 
         db.commit()
+        _after_write()
         return cat
     except Exception:
         db.rollback()
@@ -3691,29 +3257,19 @@ def update_expense_category(category_id, name=None, description=None,
 
 
 def delete_expense_category(category_id, force=False):
-    """يحذف تصنيف مصروف."""
-    db = SessionLocal()
+    db = _write()
     try:
-        cat = db.query(ExpenseCategory).filter(
-            ExpenseCategory.id == category_id
-        ).first()
+        cat = db.query(ExpenseCategory).filter(ExpenseCategory.id == category_id).first()
         if not cat:
             raise ValueError("تصنيف المصروف غير موجود!")
 
         account_id = cat.account_id
 
-        expenses_count = db.query(Expense).filter(
-            Expense.category_id == category_id
-        ).count()
-
-        if expenses_count > 0:
+        count = db.query(Expense).filter(Expense.category_id == category_id).count()
+        if count > 0:
             if not force:
-                raise ValueError(
-                    f"لا يمكن الحذف: يوجد {expenses_count} مصروف مرتبط."
-                )
-            expenses_list = db.query(Expense).filter(
-                Expense.category_id == category_id
-            ).all()
+                raise ValueError(f"لا يمكن الحذف: يوجد {count} مصروف مرتبط.")
+            expenses_list = db.query(Expense).filter(Expense.category_id == category_id).all()
             for exp in expenses_list:
                 je = db.query(models.JournalEntry).filter(
                     models.JournalEntry.reference_type == "expense",
@@ -3730,17 +3286,16 @@ def delete_expense_category(category_id, force=False):
         db.flush()
 
         if account_id:
-            other_usage = db.query(ExpenseCategory).filter(
+            other = db.query(ExpenseCategory).filter(
                 ExpenseCategory.account_id == account_id
             ).first()
-            if not other_usage:
-                acc = db.query(models.Account).filter(
-                    models.Account.id == account_id
-                ).first()
+            if not other:
+                acc = db.query(models.Account).filter(models.Account.id == account_id).first()
                 if acc:
                     db.delete(acc)
 
         db.commit()
+        _after_write()
         return True
     except Exception:
         db.rollback()
@@ -3750,22 +3305,17 @@ def delete_expense_category(category_id, force=False):
 
 
 def deactivate_expense_category(category_id):
-    """يعطل تصنيف بدل حذفه."""
     return update_expense_category(category_id, is_active=False)
 
 
 def activate_expense_category(category_id):
-    """ينشط تصنيف معطل."""
     return update_expense_category(category_id, is_active=True)
 
 
 def get_expense_category_usage(category_id):
-    """إحصائيات استخدام تصنيف: عدد المصروفات + الإجمالي."""
-    db = SessionLocal()
+    db = _read()
     try:
-        count = db.query(Expense).filter(
-            Expense.category_id == category_id
-        ).count()
+        count = db.query(Expense).filter(Expense.category_id == category_id).count()
         total = db.query(func.sum(Expense.amount)).filter(
             Expense.category_id == category_id
         ).scalar() or 0.0
@@ -3774,11 +3324,10 @@ def get_expense_category_usage(category_id):
         db.close()
 
 
-# ==========================================
-# 26. المسلسل الرقمي الموحّد للحركات
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  26. المسلسل الرقمي الموحّد
+# ═══════════════════════════════════════════════════════
 def movement_serial(prefix, id_value, digits=6):
-    """يبني مسلسلاً مقروءًا من id رقمي موجود في قاعدة البيانات."""
     if id_value is None:
         return f"{prefix}-?"
     try:
@@ -3788,7 +3337,6 @@ def movement_serial(prefix, id_value, digits=6):
 
 
 def parse_movement_serial(serial):
-    """يستخرج id الرقمي من مسلسل نصي."""
     if not serial or "-" not in str(serial):
         return None
     try:
@@ -3805,37 +3353,32 @@ def parse_movement_serial(serial):
 
 
 def movement_serial_with_year(prefix, id_value, year=None, digits=6):
-    """نسخة اختيارية: مسلسل يشمل السنة."""
     if year is None:
         year = datetime.now().year
     return movement_serial(f"{prefix}-{year}", id_value, digits)
 
 
-# ==========================================
-# 27. حارس توازن القيد
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  27. حارس توازن القيد (يأخذ db كمعامل — لا يفتح جلسة)
+# ═══════════════════════════════════════════════════════
 def validate_journal_entry(db, entry_id):
-    """يتحقق أن مجموع debit = مجموع credit في القيد."""
     lines = db.query(models.JournalLine).filter(
         models.JournalLine.entry_id == entry_id
     ).all()
 
-    total_debit = sum(float(l.debit or 0) for l in lines)
-    total_credit = sum(float(l.credit or 0) for l in lines)
+    td = sum(float(l.debit or 0) for l in lines)
+    tc = sum(float(l.credit or 0) for l in lines)
 
-    if abs(total_debit - total_credit) > 0.01:
+    if abs(td - tc) > 0.01:
         raise ValueError(
             f"⛔ قيد غير متوازن (ID={entry_id}): "
-            f"مدين={total_debit:,.2f} | دائن={total_credit:,.2f} | "
-            f"فرق={total_debit - total_credit:,.2f}"
+            f"مدين={td:,.2f} | دائن={tc:,.2f} | فرق={td - tc:,.2f}"
         )
-
     return True
 
 
 def validate_all_journal_entries():
-    """يفحص كل القيود في النظام — يُستخدم في تقارير الصيانة."""
-    db = SessionLocal()
+    db = _read()
     try:
         entries = db.query(models.JournalEntry).all()
         unbalanced = []
@@ -3843,18 +3386,14 @@ def validate_all_journal_entries():
             lines = db.query(models.JournalLine).filter(
                 models.JournalLine.entry_id == entry.id
             ).all()
-            total_debit = sum(float(l.debit or 0) for l in lines)
-            total_credit = sum(float(l.credit or 0) for l in lines)
-            if abs(total_debit - total_credit) > 0.01:
+            td = sum(float(l.debit or 0) for l in lines)
+            tc = sum(float(l.credit or 0) for l in lines)
+            if abs(td - tc) > 0.01:
                 unbalanced.append({
-                    "id": entry.id,
-                    "date": entry.date,
+                    "id": entry.id, "date": entry.date,
                     "description": entry.description,
-                    "debit": total_debit,
-                    "credit": total_credit,
-                    "diff": total_debit - total_credit,
+                    "debit": td, "credit": tc, "diff": td - tc,
                 })
-
         return {
             "total_entries": len(entries),
             "unbalanced_count": len(unbalanced),
@@ -3865,8 +3404,7 @@ def validate_all_journal_entries():
 
 
 def check_accounting_integrity():
-    """فحص شامل لسلامة النظام المحاسبي."""
-    db = SessionLocal()
+    db = _read()
     try:
         report = {
             "unbalanced_entries": [],
@@ -3875,46 +3413,37 @@ def check_accounting_integrity():
             "low_stock_count": 0,
         }
 
-        # 1) القيود غير المتوازنة
         entries = db.query(models.JournalEntry).all()
         for entry in entries:
             lines = db.query(models.JournalLine).filter(
                 models.JournalLine.entry_id == entry.id
             ).all()
-            total_debit = sum(float(l.debit or 0) for l in lines)
-            total_credit = sum(float(l.credit or 0) for l in lines)
-            if abs(total_debit - total_credit) > 0.01:
+            td = sum(float(l.debit or 0) for l in lines)
+            tc = sum(float(l.credit or 0) for l in lines)
+            if abs(td - tc) > 0.01:
                 report["unbalanced_entries"].append({
-                    "id": entry.id,
-                    "date": entry.date,
-                    "diff": total_debit - total_credit,
+                    "id": entry.id, "date": entry.date, "diff": td - tc
                 })
 
-        # 2) أسطر بدون قيد
         entry_ids = {e.id for e in entries}
         all_lines = db.query(models.JournalLine).all()
         report["orphan_journal_lines"] = sum(
             1 for l in all_lines if l.entry_id not in entry_ids
         )
 
-        # 3) أرقام فواتير مكررة
         dupes = db.query(
             models.Invoice.invoice_number,
             func.count(models.Invoice.id).label('cnt')
         ).group_by(models.Invoice.invoice_number).having(
             func.count(models.Invoice.id) > 1
         ).all()
-        report["duplicate_invoice_numbers"] = [
-            {"number": n, "count": c} for n, c in dupes
-        ]
+        report["duplicate_invoice_numbers"] = [{"number": n, "count": c} for n, c in dupes]
 
-        # 4) أصناف تحت الحد الأدنى
         rows = db.query(
             models.InventoryMovement.item_id,
             func.sum(
                 case(
-                    (models.InventoryMovement.type == 'in',
-                     models.InventoryMovement.quantity),
+                    (models.InventoryMovement.type == 'in', models.InventoryMovement.quantity),
                     else_=-models.InventoryMovement.quantity
                 )
             ).label('balance')
@@ -3923,8 +3452,7 @@ def check_accounting_integrity():
 
         items = db.query(models.Item).filter(models.Item.is_kit == False).all()
         report["low_stock_count"] = sum(
-            1 for it in items
-            if stock_map.get(it.id, 0.0) <= (it.min_stock or 0)
+            1 for it in items if stock_map.get(it.id, 0.0) <= (it.min_stock or 0)
         )
 
         return report
@@ -3932,11 +3460,10 @@ def check_accounting_integrity():
         db.close()
 
 
-# ==========================================
-# 28. دوال الفواتير المتكررة (جديد)
-# ==========================================
+# ═══════════════════════════════════════════════════════
+#  28. الفواتير المتكررة
+# ═══════════════════════════════════════════════════════
 def _calc_next_run_date(current_date, frequency):
-    """يحسب تاريخ التنفيذ التالي حسب التكرار."""
     if frequency == RecurrenceFrequency.DAILY:
         return current_date + timedelta(days=1)
     elif frequency == RecurrenceFrequency.WEEKLY:
@@ -3955,35 +3482,25 @@ def _calc_next_run_date(current_date, frequency):
 
 
 def create_recurring_template(name, party_id, invoice_type, frequency,
-                              start_date, lines, end_date=None,
-                              discount_percentage=0.0, tax_rate=14.0,
-                              notes=None, auto_post=False, created_by=None):
-    """ينشئ قالب فاتورة متكررة."""
-    db = SessionLocal()
+                               start_date, lines, end_date=None,
+                               discount_percentage=0.0, tax_rate=14.0,
+                               notes=None, auto_post=False, created_by=None):
+    db = _write()
     try:
         check_period_open(start_date, entity="إنشاء قالب فاتورة متكررة")
 
         party = db.query(models.Party).filter(models.Party.id == party_id).first()
         if not party:
             raise ValueError("العميل/المورد غير موجود!")
-
         if not lines or len(lines) == 0:
             raise ValueError("يجب إضافة سطر واحد على الأقل")
 
         template = RecurringInvoiceTemplate(
-            name=name.strip(),
-            party_id=party_id,
-            invoice_type=invoice_type,
-            frequency=frequency,
-            start_date=start_date,
-            end_date=end_date,
-            next_run_date=start_date,
-            discount_percentage=discount_percentage,
-            tax_rate=tax_rate,
-            notes=notes,
-            is_active=True,
-            auto_post=auto_post,
-            created_by=created_by,
+            name=name.strip(), party_id=party_id, invoice_type=invoice_type,
+            frequency=frequency, start_date=start_date, end_date=end_date,
+            next_run_date=start_date, discount_percentage=discount_percentage,
+            tax_rate=tax_rate, notes=notes, is_active=True,
+            auto_post=auto_post, created_by=created_by,
         )
         db.add(template)
         db.flush()
@@ -3993,13 +3510,12 @@ def create_recurring_template(name, party_id, invoice_type, frequency,
             if not item:
                 raise ValueError(f"الصنف '{ln['item_name']}' غير موجود!")
             db.add(RecurringInvoiceLine(
-                template_id=template.id,
-                item_id=item.id,
-                quantity=float(ln['quantity']),
-                price=float(ln['price']),
+                template_id=template.id, item_id=item.id,
+                quantity=float(ln['quantity']), price=float(ln['price']),
             ))
 
         db.commit()
+        _after_write()
         return template
     except Exception:
         db.rollback()
@@ -4009,8 +3525,7 @@ def create_recurring_template(name, party_id, invoice_type, frequency,
 
 
 def get_recurring_templates(only_active=False):
-    """يرجع كل القوالب مرتبة حسب تاريخ التنفيذ."""
-    db = SessionLocal()
+    db = _read()
     try:
         q = db.query(RecurringInvoiceTemplate)
         if only_active:
@@ -4021,8 +3536,7 @@ def get_recurring_templates(only_active=False):
 
 
 def get_recurring_template(template_id):
-    """يرجع قالب واحد بالمعرف."""
-    db = SessionLocal()
+    db = _read()
     try:
         return db.query(RecurringInvoiceTemplate).filter(
             RecurringInvoiceTemplate.id == template_id
@@ -4032,40 +3546,31 @@ def get_recurring_template(template_id):
 
 
 def get_recurring_template_lines(template_id):
-    """يرجع سطور القالب مع بيانات الأصناف."""
-    db = SessionLocal()
+    db = _read()
     try:
         lines = db.query(RecurringInvoiceLine).filter(
             RecurringInvoiceLine.template_id == template_id
         ).all()
-
         if not lines:
             return []
 
         item_ids = [l.item_id for l in lines]
-        items_map = {
-            i.id: i for i in db.query(models.Item).filter(
-                models.Item.id.in_(item_ids)
-            ).all()
-        }
+        items_map = {i.id: i for i in db.query(models.Item).filter(
+            models.Item.id.in_(item_ids)
+        ).all()}
 
-        return [
-            {
-                "line_id": l.id,
-                "item_id": l.item_id,
-                "item_name": items_map[l.item_id].name if l.item_id in items_map else "—",
-                "quantity": float(l.quantity or 0),
-                "price": float(l.price or 0),
-            }
-            for l in lines
-        ]
+        return [{
+            "line_id": l.id, "item_id": l.item_id,
+            "item_name": items_map[l.item_id].name if l.item_id in items_map else "—",
+            "quantity": float(l.quantity or 0),
+            "price": float(l.price or 0),
+        } for l in lines]
     finally:
         db.close()
 
 
 def update_recurring_template(template_id, **kwargs):
-    """يحدّث قالب."""
-    db = SessionLocal()
+    db = _write()
     try:
         t = db.query(RecurringInvoiceTemplate).filter(
             RecurringInvoiceTemplate.id == template_id
@@ -4093,6 +3598,7 @@ def update_recurring_template(template_id, **kwargs):
             t.end_date = kwargs['end_date']
 
         db.commit()
+        _after_write()
         return t
     except Exception:
         db.rollback()
@@ -4102,8 +3608,7 @@ def update_recurring_template(template_id, **kwargs):
 
 
 def delete_recurring_template(template_id):
-    """يحذف قالب."""
-    db = SessionLocal()
+    db = _write()
     try:
         t = db.query(RecurringInvoiceTemplate).filter(
             RecurringInvoiceTemplate.id == template_id
@@ -4112,6 +3617,7 @@ def delete_recurring_template(template_id):
             raise ValueError("القالب غير موجود!")
         db.delete(t)
         db.commit()
+        _after_write()
         return True
     except Exception:
         db.rollback()
@@ -4121,15 +3627,13 @@ def delete_recurring_template(template_id):
 
 
 def run_recurring_template(template_id, force=False, created_by=None):
-    """ينفّذ قالب: ينشئ فاتورة فعلية + يحدّث القالب."""
-    db = SessionLocal()
+    db = _write()
     try:
         t = db.query(RecurringInvoiceTemplate).filter(
             RecurringInvoiceTemplate.id == template_id
         ).first()
         if not t:
             raise ValueError("القالب غير موجود!")
-
         if not t.is_active:
             raise ValueError("القالب غير نشط!")
 
@@ -4141,7 +3645,6 @@ def run_recurring_template(template_id, force=False, created_by=None):
         lines = db.query(RecurringInvoiceLine).filter(
             RecurringInvoiceLine.template_id == t.id
         ).all()
-
         if not lines:
             raise ValueError("القالب بلا سطور!")
 
@@ -4155,58 +3658,69 @@ def run_recurring_template(template_id, force=False, created_by=None):
                 'quantity': float(l.quantity),
                 'price': float(l.price),
             })
-
         if not items_data:
             raise ValueError("لا توجد أصناف صالحة!")
 
-        # توليد رقم فاتورة فريد
+        # ⚠️ نغلق هذه الجلسة قبل استدعاء create_invoice (يتطلب جلسة مستقلة)
         invoice_count = db.query(models.Invoice).count()
         new_invoice_number = f"INV-{invoice_count + 1:06d}"
-
         while db.query(models.Invoice).filter(
             models.Invoice.invoice_number == new_invoice_number
         ).first():
             invoice_count += 1
             new_invoice_number = f"INV-{invoice_count + 1:06d}"
 
-        # إنشاء الفاتورة الفعلية
+        t_id = t.id
+        t_created = t.created_by
+        t_party = t.party_id
+        t_type = t.invoice_type
+        t_disc = float(t.discount_percentage or 0)
+        t_tax = float(t.tax_rate or 0)
+
+        db.close()
+        db = None
+
+        # إنشاء الفاتورة (بجلسة كتابة مستقلة داخل create_invoice)
         invoice = create_invoice(
-            party_id=t.party_id,
-            invoice_type=t.invoice_type,
-            items=items_data,
+            party_id=t_party, invoice_type=t_type, items=items_data,
             invoice_number=new_invoice_number,
-            discount_percentage=float(t.discount_percentage or 0),
-            tax_rate=float(t.tax_rate or 0),
-            created_by=created_by or t.created_by,
+            discount_percentage=t_disc, tax_rate=t_tax,
+            created_by=created_by or t_created,
         )
 
-        # تحديث القالب
-        t.last_run_date = datetime.now()
-        t.runs_count = (t.runs_count or 0) + 1
-        t.next_run_date = _calc_next_run_date(
-            t.next_run_date or datetime.now(), t.frequency
-        )
-
-        if t.end_date and t.next_run_date > t.end_date:
-            t.is_active = False
-
-        db.commit()
+        # جلسة جديدة لتحديث القالب
+        db2 = _write()
+        try:
+            t2 = db2.query(RecurringInvoiceTemplate).filter(
+                RecurringInvoiceTemplate.id == t_id
+            ).first()
+            t2.last_run_date = datetime.now()
+            t2.runs_count = (t2.runs_count or 0) + 1
+            t2.next_run_date = _calc_next_run_date(
+                t2.next_run_date or datetime.now(), t2.frequency
+            )
+            if t2.end_date and t2.next_run_date > t2.end_date:
+                t2.is_active = False
+            db2.commit()
+            _after_write()
+        finally:
+            db2.close()
 
         return {
-            'invoice': invoice,
-            'template': t,
+            'invoice': invoice, 'template': t,
             'invoice_number': new_invoice_number,
         }
     except Exception:
-        db.rollback()
+        if db is not None:
+            db.rollback()
         raise
     finally:
-        db.close()
+        if db is not None:
+            db.close()
 
 
 def get_due_recurring_templates():
-    """يرجع القوالب المستحقة التنفيذ الآن."""
-    db = SessionLocal()
+    db = _read()
     try:
         now = datetime.now()
         return db.query(RecurringInvoiceTemplate).filter(
@@ -4218,18 +3732,11 @@ def get_due_recurring_templates():
 
 
 def process_due_recurring_templates(auto_run=False, created_by=None):
-    """يعالج القوالب المستحقة.
-
-    Args:
-        auto_run: True = نفّذ تلقائياً، False = أعرض فقط
-    """
     due = get_due_recurring_templates()
 
     if not auto_run:
         return {
-            'total': len(due),
-            'processed': 0,
-            'failed': 0,
+            'total': len(due), 'processed': 0, 'failed': 0,
             'results': [{'template': t, 'status': 'pending'} for t in due]
         }
 
@@ -4242,21 +3749,16 @@ def process_due_recurring_templates(auto_run=False, created_by=None):
             r = run_recurring_template(t.id, force=True, created_by=created_by)
             processed += 1
             results.append({
-                'template': t,
-                'status': 'success',
+                'template': t, 'status': 'success',
                 'invoice_number': r['invoice_number'],
             })
         except Exception as e:
             failed += 1
             results.append({
-                'template': t,
-                'status': 'failed',
-                'error': str(e),
+                'template': t, 'status': 'failed', 'error': str(e),
             })
 
     return {
-        'total': len(due),
-        'processed': processed,
-        'failed': failed,
-        'results': results,
+        'total': len(due), 'processed': processed,
+        'failed': failed, 'results': results,
     }

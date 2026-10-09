@@ -590,3 +590,97 @@ st.caption(
     f"🕐 آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
     f"👤 {current_user_name}"
 )
+# في أي مكان مناسب داخل الصفحة
+import os
+import streamlit as st
+
+st.markdown("---")
+st.subheader("⚙️ إعدادات السرعة والمزامنة")
+
+_mode = os.getenv("DEPLOY_MODE", "cloud").lower()
+
+if _mode == "local":
+    from sync_manager import get_sync_state, full_sync, set_interval
+    from local_mirror import get_local_db_size_mb, reset_local_db
+
+    _st = get_sync_state()
+    _size = get_local_db_size_mb()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("💾 حجم SQLite", f"{_size:.1f} MB")
+    col2.metric("📈 صفوف مُزامَنة", f"{_st['rows_synced']:,}")
+
+    if _st["last_sync"]:
+        col3.metric(
+            "🕐 آخر مزامنة",
+            _st["last_sync"].strftime("%H:%M:%S"),
+        )
+    else:
+        col3.metric("🕐 آخر مزامنة", "—")
+
+    st.markdown("#### ⏱️ فترة المزامنة التلقائية")
+    _intervals = {
+        "كل 5 دقائق": 300,
+        "كل 15 دقيقة": 900,
+        "كل 30 دقيقة (موصى به)": 1800,
+        "كل ساعة": 3600,
+    }
+    _chosen = st.radio(
+        "اختر الفترة",
+        list(_intervals.keys()),
+        index=2,
+        horizontal=True,
+    )
+    if st.button("💾 حفظ فترة المزامنة"):
+        _seconds = _intervals[_chosen]
+        _env_path = ".env"
+        _lines = []
+        _found = False
+        if os.path.exists(_env_path):
+            with open(_env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("SYNC_INTERVAL_SECONDS="):
+                        _lines.append(f"SYNC_INTERVAL_SECONDS={_seconds}\n")
+                        _found = True
+                    else:
+                        _lines.append(line)
+        if not _found:
+            _lines.append(f"SYNC_INTERVAL_SECONDS={_seconds}\n")
+
+        with open(_env_path, "w", encoding="utf-8") as f:
+            f.writelines(_lines)
+
+        st.success(f"✅ تم الحفظ. أعد تشغيل التطبيق لتطبيق التغيير.")
+        st.info(f"القيمة الجديدة: {_seconds} ثانية")
+
+    st.markdown("#### 🛠️ إجراءات")
+    _c1, _c2, _c3 = st.columns(3)
+    with _c1:
+        if st.button("🔄 مزامنة الآن", use_container_width=True, type="primary"):
+            with st.spinner("جاري المزامنة الكاملة..."):
+                _ok = full_sync(verbose=True)
+            if _ok:
+                st.cache_data.clear()
+                st.success("✅ تمت المزامنة")
+                st.rerun()
+            else:
+                st.error("❌ فشلت المزامنة — راجع السجل")
+    with _c2:
+        if st.button("🧹 مسح الكاش", use_container_width=True):
+            st.cache_data.clear()
+            st.success("✅ تم مسح الكاش")
+    with _c3:
+        if st.button("🗑️ إعادة بناء SQLite", use_container_width=True,
+                     help="احذف SQLite وأعد المزامنة من الصفر"):
+            with st.spinner("جاري إعادة البناء..."):
+                reset_local_db()
+                full_sync(verbose=True)
+                st.cache_data.clear()
+            st.success("✅ تم إعادة البناء")
+            st.rerun()
+
+    if _st["error"]:
+        st.error(f"⚠️ آخر خطأ: {_st['error']}")
+else:
+    st.info("☁️ أنت في الوضع السحابي — لا توجد مزامنة محلية.")
+    st.caption("لتسريع النسخة المحلية، ضع DEPLOY_MODE=local في ملف .env")

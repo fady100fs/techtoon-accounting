@@ -1,38 +1,95 @@
-# Secrets
+# ═══════════ Environment / Secrets ═══════════
 .env
-*.env
+.env.*
+!.env.example
 .streamlit/secrets.toml
+.sessions.json
+.login_attempts.json
 
-# Database
+# ═══════════ Local SQLite Mirror ═══════════
+data/
 *.db
-*.sqlite
-*.sqlite3
-*.db.backup*
-*.db.before_*
-*.db.toupload
+*.db-journal
+*.db-wal
+*.db-shm
+local_mirror.db*
 
-# Backup files
-*.bak*
-*.py.before_*
+# ═══════════ WebView Data ═══════════
+.webview_data/
 
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
+# ═══════════ Backups ═══════════
+*.backup_*
+*.before_*
+*.bak
+*.bak2
+*.bak3
+*.bak_*
+services.py.bak*
+launcher.py.bak*
 
-# IDE
-.vscode/
-.idea/
-
-# Logs
+# ═══════════ Logs ═══════════
+streamlit.log
+launcher_error.log
 *.log
 
-# OS
+# ═══════════ Build Artifacts ═══════════
+build/
+dist/
+*.spec
+TechtoonAccounting.spec
+__pycache__/
+*.pyc
+*.pyo
+
+# ═══════════ Virtual Environments ═══════════
+venv/
+.venv/
+env/
+node_modules/
+
+# ═══════════ IDE ═══════════
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ═══════════ OS ═══════════
 Thumbs.db
 .DS_Store
+desktop.ini
 
-# Media (large)
-media/
+# ═══════════ Fonts (binary, too big) ═══════════
+fonts/*.ttf
+fonts/*.otf
+fonts/*.woff
+
+# ═══════════ Test Artifacts ═══════════
+test_pythonw.txt
+_fix_*.py
+_initial_sync.py
+_*.txt
+
+# ═══════════ Temporary scripts ═══════════
+create_shortcut.ps1
+# ═══════════ WebView (Edge Runtime cache) ═══════════
+.webview_data/
+.webview_data
+
+# ═══════════ Database files (لا ترفع) ═══════════
+*.db.toupload
+accounting.db.toupload
+backups/
+*.xlsx
+!requirements.xlsx
+template_items.xlsx
+
+# ═══════════ Config with secrets ═══════════
 backup_config.json
+
+# ═══════════ Old cache backups ═══════════
+cache_helpers_original.txt
+
+# ═══════════ Build artifacts ═══════════
+build/
+dist/
+*.spec

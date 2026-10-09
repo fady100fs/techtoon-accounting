@@ -10,6 +10,7 @@ import streamlit as st
 import pandas as pd
 import traceback
 import re
+import math
 from datetime import datetime
 
 from database import SessionLocal
@@ -24,9 +25,30 @@ from period_guard import check_period_open
 from auth_required import require_login, get_current_user_id, get_current_user_name
 from form_manager import clear_form, show_clear_hint
 
+# ⭐ وصف اختياري — قيمة افتراضية آمنة
+def _safe_desc(d, default="حركة خزينة"):
+    if d is None or str(d).strip() == "":
+        return default
+    return str(d).strip()
+
+
 current_user = require_login()
 current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
+
+# ⭐ استقبال التنقل من شجرة الحسابات
+try:
+    from navigation_helper import consume_navigation_flags, show_navigation_banner
+    _nav = consume_navigation_flags()
+    show_navigation_banner(_nav, page_name="حركات الخزينة")
+    _nav_filter_account = _nav.get("filter_expense_by_account") or _nav.get("filter_by_account")
+    _nav_filter_party = _nav.get("filter_party_id")
+    if _nav_filter_account:
+        st.session_state["_cm_nav_account_id"] = _nav_filter_account
+    if _nav_filter_party:
+        st.session_state["_cm_nav_party_id"] = _nav_filter_party
+except Exception:
+    pass
 
 st.set_page_config(page_title="حركات الخزينة", page_icon="💹", layout="wide")
 st.title("💹 حركات الخزينة")
@@ -34,87 +56,92 @@ show_clear_hint()
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 
 
-# ═══════════════════════════════════════════════════════════
-# ✅ PFX: بادئة موحّدة لمفاتيح هذه الصفحة
-# ═══════════════════════════════════════════════════════════
 PFX = "cm_"
 
 
-# ═══════════════════════════════════════════════════════════
-# ✅ ألوان مجموعات الحسابات (للشبكة)
-# ═══════════════════════════════════════════════════════════
 GROUP_COLORS = {
-    "💰 الإيرادات": "#10b981",           # أخضر
-    "👥 تحصيل من عملاء": "#3b82f6",       # أزرق
-    "💵 قروض وسلف": "#8b5cf6",            # بنفسجي
-    "🏦 حقوق ملكية": "#06b6d4",           # سماوي
-    "💸 مصروفات": "#ef4444",              # أحمر
-    "📦 الأصول": "#64748b",               # رمادي
-    "🤝 الموردون": "#f59e0b",             # برتقالي
+    "💰 الإيرادات": "#10b981",
+    "👥 تحصيل من عملاء": "#3b82f6",
+    "💵 قروض وسلف": "#8b5cf6",
+    "🏦 حقوق ملكية": "#06b6d4",
+    "💸 مصروفات": "#ef4444",
+    "📦 الأصول": "#64748b",
+    "🤝 الموردون": "#f59e0b",
 }
+
+ALL_GROUPS = list(GROUP_COLORS.keys())
 
 
 db = SessionLocal()
 
 
-# ==========================================
-# CSS للشبكة الملونة
-# ==========================================
-def _inject_grid_css(groups):
-    """يولّد CSS ديناميكي لكل مجموعة (بلون مختلف)."""
+ACCOUNTS_PER_ROW = 6
+BTN_MIN_H = 120
+BTN_FONT_SIZE = 12
+
+
+def _inject_grid_css(all_accounts):
     css = ["<style>"]
-
-    for gi, (group_name, _) in enumerate(groups.items()):
+    for acc, group_name in all_accounts:
         color = GROUP_COLORS.get(group_name, "#2563eb")
-        container_sel = f'.st-key-{PFX}acc_grp_{gi}'
-
+        container_sel = f'.st-key-{PFX}acc_btn_{acc.id}'
         css.append(f"""
         {container_sel} button {{
             background: {color} !important;
             color: #ffffff !important;
-            border: 2px solid {color} !important;
-            border-radius: 12px !important;
-            padding: 10px 8px !important;
-            min-height: 82px !important;
+            border: 1.5px solid {color} !important;
+            border-radius: 10px !important;
+            padding: 8px 5px !important;
+            min-height: {BTN_MIN_H}px !important;
+            height: {BTN_MIN_H}px !important;
             width: 100% !important;
             font-weight: 700 !important;
-            font-size: 13px !important;
-            line-height: 1.35 !important;
+            font-size: {BTN_FONT_SIZE}px !important;
+            line-height: 1.25 !important;
             white-space: normal !important;
             word-break: break-word !important;
+            overflow: visible !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            text-align: center !important;
             transition: all 0.15s ease !important;
+            margin: 0 !important;
         }}
         {container_sel} button:hover {{
-            filter: brightness(1.15) !important;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 14px rgba(0,0,0,0.25) !important;
+            filter: brightness(1.2) !important;
+            transform: translateY(-1px);
+            box-shadow: 0 5px 14px rgba(0,0,0,0.4) !important;
             border-color: #ffffff !important;
         }}
-        {container_sel} button:focus {{
-            outline: none !important;
-        }}
-        {container_sel} button p {{
+        {container_sel} button:focus {{ outline: none !important; }}
+        {container_sel} button > div,
+        {container_sel} button > div > p,
+        {container_sel} button p,
+        {container_sel} button span {{
             color: #ffffff !important;
-            font-size: 13px !important;
+            font-size: {BTN_FONT_SIZE}px !important;
             font-weight: 700 !important;
+            line-height: 1.25 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            white-space: normal !important;
+            word-break: break-word !important;
+            overflow: visible !important;
+            text-align: center !important;
+            width: 100% !important;
         }}
-        /* المربع المختار: إطار أبيض + ظل */
         {container_sel} button[kind="primary"],
         {container_sel} button[data-testid="stBaseButton-primary"] {{
-            background: {color} !important;
             border: 3px solid #ffffff !important;
-            box-shadow: 0 0 0 3px {color}, 0 0 24px rgba(255,255,255,0.45) !important;
-            transform: scale(1.02);
+            box-shadow: 0 0 0 3px {color}, 0 0 18px rgba(255,255,255,0.7) !important;
+            transform: scale(1.04);
         }}
         """)
-
     css.append("</style>")
     return "".join(css)
 
 
-# ==========================================
-# دوال مساعدة
-# ==========================================
 def _create_cash_movement(cash_box_id, counter_account_id, amount, description,
                           direction, reference_number=None, notes=None,
                           created_by=None, movement_date=None):
@@ -123,22 +150,18 @@ def _create_cash_movement(cash_box_id, counter_account_id, amount, description,
         cash_box = db_local.query(CashBox).filter(CashBox.id == cash_box_id).first()
         if not cash_box:
             raise ValueError("الخزينة غير موجودة")
-
         counter_acc = db_local.query(Account).filter(Account.id == counter_account_id).first()
         if not counter_acc:
             raise ValueError("الحساب المقابل غير موجود")
-
         mov_date = movement_date or datetime.now()
         dir_label = "وارد" if direction == "in" else "صادر"
         desc = f"{dir_label}: {description} — {counter_acc.code} {counter_acc.name}"
-
         entry = models.JournalEntry(
             date=mov_date, description=desc[:250],
             reference_type="cash_movement", created_by=created_by,
         )
         db_local.add(entry)
         db_local.flush()
-
         if direction == "in":
             db_local.add(models.JournalLine(entry_id=entry.id, account_id=cash_box.account_id,
                                             debit=float(amount), credit=0.0))
@@ -149,7 +172,6 @@ def _create_cash_movement(cash_box_id, counter_account_id, amount, description,
                                             debit=float(amount), credit=0.0))
             db_local.add(models.JournalLine(entry_id=entry.id, account_id=cash_box.account_id,
                                             debit=0.0, credit=float(amount)))
-
         db_local.commit()
         return entry
     except Exception:
@@ -175,7 +197,34 @@ def _get_or_create_category_for_account(db_local, account):
     return cat
 
 
-def _get_movements(direction=None, start=None, end=None):
+def _get_group_for_account(acc):
+    if not acc:
+        return None
+    n = acc.name or ""
+    if acc.type == AccountType.REVENUE:
+        return "💰 الإيرادات"
+    elif acc.type == AccountType.EXPENSE:
+        return "💸 مصروفات"
+    elif acc.type == AccountType.EQUITY:
+        return "🏦 حقوق ملكية"
+    elif acc.type == AccountType.LIABILITY:
+        if "قرض" in n or "سلف" in n:
+            return "💵 قروض وسلف"
+        elif "مورد" in n:
+            return "🤝 الموردون"
+        else:
+            return "💵 قروض وسلف"
+    elif acc.type == AccountType.ASSET:
+        if "عميل" in n or "مدينون" in n:
+            return "👥 تحصيل من عملاء"
+        else:
+            return "📦 الأصول"
+    return None
+
+
+def _get_movements(direction=None, start=None, end=None,
+                   counter_group=None, counter_search=None,
+                   filter_account_id=None, filter_party_id=None):
     q = db.query(models.JournalEntry).filter(
         models.JournalEntry.reference_type.in_(["revenue", "expense", "cash_movement"])
     )
@@ -184,14 +233,53 @@ def _get_movements(direction=None, start=None, end=None):
     if end:
         q = q.filter(models.JournalEntry.date <= end)
     entries = q.order_by(models.JournalEntry.date.desc()).all()
-    if direction:
-        filtered = []
-        for e in entries:
+    result = []
+    search_q = (counter_search or "").strip().lower()
+    for e in entries:
+        if direction:
             d = _movement_direction(e)
-            if d == direction:
-                filtered.append(e)
-        return filtered
-    return entries
+            if d != direction:
+                continue
+        det = _movement_details(e)
+        if filter_account_id:
+            try:
+                f_acc_id = int(filter_account_id)
+                entry_lines = db.query(models.JournalLine).filter(
+                    models.JournalLine.entry_id == e.id,
+                    models.JournalLine.account_id == f_acc_id
+                ).first()
+                if not entry_lines:
+                    continue
+            except Exception:
+                pass
+        if filter_party_id:
+            try:
+                f_party_id = int(filter_party_id)
+                f_party = db.query(models.Party).filter(
+                    models.Party.id == f_party_id
+                ).first()
+                if f_party and f_party.account_id:
+                    entry_lines = db.query(models.JournalLine).filter(
+                        models.JournalLine.entry_id == e.id,
+                        models.JournalLine.account_id == f_party.account_id
+                    ).first()
+                    if not entry_lines:
+                        continue
+            except Exception:
+                pass
+        if counter_group and counter_group != "— الكل —":
+            grp = _get_group_for_account(det.get("counter_acc"))
+            if grp != counter_group:
+                continue
+        if search_q:
+            counter_acc = det.get("counter_acc")
+            code = (counter_acc.code or "").lower() if counter_acc else ""
+            name = (counter_acc.name or "").lower() if counter_acc else ""
+            desc = (e.description or "").lower()
+            if (search_q not in code and search_q not in name and search_q not in desc):
+                continue
+        result.append(e)
+    return result
 
 
 def _movement_direction(entry):
@@ -221,21 +309,38 @@ def _movement_details(entry):
     return {
         "cash_acc": cash_line[0] if cash_line else None,
         "counter_acc": counter_line[0] if counter_line else None,
+        "counter_acc_id": counter_line[0].id if counter_line else None,
         "amount": amount,
         "direction": _movement_direction(entry),
     }
 
 
+# ═══════════════════════════════════════════════════════════
+# ⭐ _delete_movement — مُصلَحة (إعادة تحميل الكائن في الجلسة الجديدة)
+# ═══════════════════════════════════════════════════════════
 def _delete_movement(entry):
+    """حذف حركة خزينة — إعادة تحميل الكائن في الجلسة الجديدة."""
     db_local = SessionLocal()
     try:
-        if entry.date:
-            check_period_open(entry.date, entity="حذف حركة خزينة")
+        entry_id = entry.id
+        entry_date = entry.date
 
+        if entry_date:
+            check_period_open(entry_date, entity="حذف حركة خزينة")
+
+        # 1) حذف أسطر القيد أولاً
         db_local.query(models.JournalLine).filter(
-            models.JournalLine.entry_id == entry.id
+            models.JournalLine.entry_id == entry_id
         ).delete(synchronize_session=False)
-        db_local.delete(entry)
+
+        # 2) ⭐ إعادة تحميل الكائن في الجلسة الجديدة قبل الحذف
+        entry_local = db_local.query(models.JournalEntry).filter(
+            models.JournalEntry.id == entry_id
+        ).first()
+
+        if entry_local:
+            db_local.delete(entry_local)
+
         db_local.commit()
     except Exception:
         db_local.rollback()
@@ -245,6 +350,7 @@ def _delete_movement(entry):
 
 
 def _update_movement(entry_id, new_amount, new_date, new_desc,
+                     new_counter_account_id=None,
                      new_ref=None, new_notes=None):
     db_local = SessionLocal()
     try:
@@ -253,15 +359,12 @@ def _update_movement(entry_id, new_amount, new_date, new_desc,
         ).first()
         if not entry:
             raise ValueError("الحركة غير موجودة")
-
         if entry.date:
             check_period_open(entry.date, entity="تعديل حركة خزينة")
         check_period_open(new_date, entity="تعديل حركة خزينة")
-
         lines = db_local.query(models.JournalLine).filter(
             models.JournalLine.entry_id == entry.id
         ).all()
-
         cash_line = None
         counter_line = None
         for ln in lines:
@@ -272,18 +375,26 @@ def _update_movement(entry_id, new_amount, new_date, new_desc,
                 cash_line = ln
             else:
                 counter_line = ln
-
         if not cash_line or not counter_line:
             raise ValueError("تعذّر تحديد أسطر القيد")
-
         direction = _movement_direction(entry)
         dir_label = "وارد" if direction == "in" else "صادر"
-
+        if new_counter_account_id and int(new_counter_account_id) != int(counter_line.account_id):
+            new_acc = db_local.query(Account).filter(
+                Account.id == int(new_counter_account_id)
+            ).first()
+            if not new_acc:
+                raise ValueError("الحساب المقابل الجديد غير موجود")
+            is_cash = db_local.query(CashBox).filter(
+                CashBox.account_id == new_acc.id
+            ).first() is not None
+            if is_cash:
+                raise ValueError("لا يمكن اختيار حساب خزينة كطرف مقابل")
+            counter_line.account_id = int(new_counter_account_id)
         counter_acc = db_local.query(Account).filter(
             Account.id == counter_line.account_id
         ).first()
         counter_label = f"{counter_acc.code} {counter_acc.name}" if counter_acc else ""
-
         entry.date = new_date
         new_desc_full = f"{dir_label}: {new_desc.strip()}"
         if counter_label:
@@ -291,7 +402,6 @@ def _update_movement(entry_id, new_amount, new_date, new_desc,
         if new_notes and new_notes.strip():
             new_desc_full += f" [{new_notes.strip()}]"
         entry.description = new_desc_full[:250]
-
         if direction == "in":
             cash_line.debit = float(new_amount)
             cash_line.credit = 0.0
@@ -302,7 +412,6 @@ def _update_movement(entry_id, new_amount, new_date, new_desc,
             counter_line.credit = 0.0
             cash_line.debit = 0.0
             cash_line.credit = float(new_amount)
-
         db_local.commit()
         return entry
     except Exception:
@@ -316,13 +425,8 @@ def _get_counter_account_groups():
     accounts = db.query(Account).order_by(Account.code).all()
     cash_account_ids = [b.account_id for b in db.query(CashBox).all()]
     groups = {
-        "💰 الإيرادات": [],
-        "👥 تحصيل من عملاء": [],
-        "💵 قروض وسلف": [],
-        "🏦 حقوق ملكية": [],
-        "💸 مصروفات": [],
-        "📦 الأصول": [],
-        "🤝 الموردون": [],
+        "💰 الإيرادات": [], "👥 تحصيل من عملاء": [], "💵 قروض وسلف": [],
+        "🏦 حقوق ملكية": [], "💸 مصروفات": [], "📦 الأصول": [], "🤝 الموردون": [],
     }
     for acc in accounts:
         if acc.id in cash_account_ids:
@@ -348,6 +452,32 @@ def _get_counter_account_groups():
     return {k: v for k, v in groups.items() if v}
 
 
+def _flatten_accounts(groups):
+    flat = []
+    order = ["💰 الإيرادات", "👥 تحصيل من عملاء", "💵 قروض وسلف",
+             "🏦 حقوق ملكية", "💸 مصروفات", "📦 الأصول", "🤝 الموردون"]
+    for group_name in order:
+        if group_name in groups:
+            for acc in groups[group_name]:
+                flat.append((acc, group_name))
+    return flat
+
+
+def _filter_accounts(all_accounts, group_filter, search_query):
+    result = []
+    q = (search_query or "").strip().lower()
+    for acc, grp in all_accounts:
+        if group_filter and group_filter != "— الكل —" and grp != group_filter:
+            continue
+        if q:
+            code = (acc.code or "").lower()
+            name = (acc.name or "").lower()
+            if q not in code and q not in name:
+                continue
+        result.append((acc, grp))
+    return result
+
+
 def _extract_original_desc(description):
     if not description:
         return ""
@@ -359,187 +489,194 @@ def _extract_original_desc(description):
     return head.strip()
 
 
-# ==========================================
-# التبويبات
-# ==========================================
+def _is_customer_account(acc):
+    n = (acc.name or "") if acc else ""
+    return ("عميل" in n) or ("مدينون" in n)
+
+
+def _is_supplier_account(acc):
+    n = (acc.name or "") if acc else ""
+    return ("مورد" in n) or ("دائنون" in n)
+
+
 tab1, tab2, tab3, tab4 = st.tabs([
-    "➕ تسجيل حركة جديدة",
-    "📋 سجل الحركات",
-    "⚙️ تعديل / حذف حركة",
-    "📊 تقرير الخزينة",
+    "➕ تسجيل حركة جديدة", "📋 سجل الحركات",
+    "⚙️ تعديل / حذف حركة", "📊 تقرير الخزينة",
 ])
 
 
 # ==========================================
-# التبويب 1: تسجيل حركة جديدة
+# التبويب 1
 # ==========================================
 with tab1:
     st.subheader("➕ تسجيل حركة جديدة")
-
     cash_boxes = db.query(CashBox).filter(CashBox.is_active == True).all()
     if not cash_boxes:
         st.error("⚠️ لا توجد خزائن مفعّلة!")
         st.stop()
-
     box_opts = {b.id: f"{b.name} ({b.code})" for b in cash_boxes}
-    selected_box_id = st.selectbox(
-        "1️⃣ الخزينة:",
-        options=list(box_opts.keys()),
-        format_func=lambda x: box_opts[x],
-        key=f"{PFX}box",
-    )
-
+    selected_box_id = st.selectbox("1️⃣ الخزينة:", options=list(box_opts.keys()),
+                                    format_func=lambda x: box_opts[x], key=f"{PFX}box")
     st.markdown("### 2️⃣ نوع الحركة")
-    direction = st.radio(
-        "الاتجاه:",
-        ["in", "out"],
-        format_func=lambda x: "💰 وارد (استلام نقدية)" if x == "in" else "💸 صادر (دفع نقدية)",
-        horizontal=True,
-        key=f"{PFX}dir",
-    )
-
-    st.markdown("### 3️⃣ الحساب المقابل (سبب الحركة)")
+    direction = st.radio("الاتجاه:", ["in", "out"],
+                          format_func=lambda x: "💰 وارد" if x == "in" else "💸 صادر",
+                          horizontal=True, key=f"{PFX}dir")
+    st.markdown("### 3️⃣ الحساب المقابل")
     st.caption("💡 اضغط على مربع الحساب لاختياره.")
-
     counter_groups = _get_counter_account_groups()
-
     if not counter_groups:
         st.error("⚠️ لا توجد حسابات طرف مقابل!")
         st.stop()
-
-    # ✅ CSS ديناميكي لكل مجموعة
-    st.markdown(_inject_grid_css(counter_groups), unsafe_allow_html=True)
-
-    # ✅ الشبكة
-    COLS_PER_ROW = 3
+    all_accounts = _flatten_accounts(counter_groups)
+    st.markdown(_inject_grid_css(all_accounts), unsafe_allow_html=True)
     selected_account_id = st.session_state.get(f"{PFX}selected_account")
-
-    for gi, (group_name, accounts) in enumerate(counter_groups.items()):
-        group_color = GROUP_COLORS.get(group_name, "#2563eb")
-
-        # عنوان المجموعة
-        st.markdown(
-            f'<div style="'
-            f'color:{group_color}; font-weight:800; font-size:1.05rem; '
-            f'margin: 14px 0 6px 0; '
-            f'border-right: 4px solid {group_color}; padding-right: 10px;'
-            f'">{group_name} ({len(accounts)})</div>',
-            unsafe_allow_html=True,
-        )
-
-        # صفوف المربعات
-        with st.container(key=f"{PFX}acc_grp_{gi}"):
-            for i in range(0, len(accounts), COLS_PER_ROW):
-                cols = st.columns(COLS_PER_ROW)
-                for j, acc in enumerate(accounts[i:i + COLS_PER_ROW]):
-                    with cols[j]:
-                        is_selected = (selected_account_id == acc.id)
-                        label = (
-                            f"{'✅ ' if is_selected else ''}"
-                            f"{acc.code}\n{acc.name}"
-                        )
-                        btn_type = "primary" if is_selected else "secondary"
-                        if st.button(
-                            label,
-                            key=f"{PFX}acc_btn_{acc.id}",
-                            type=btn_type,
-                            use_container_width=True,
-                        ):
-                            st.session_state[f"{PFX}selected_account"] = acc.id
-                            st.rerun()
-
-    # عرض الحساب المختار
+    total = len(all_accounts)
+    num_rows = math.ceil(total / ACCOUNTS_PER_ROW)
+    idx_global = 0
+    for r in range(num_rows):
+        cols = st.columns(ACCOUNTS_PER_ROW, gap="small")
+        for c in range(ACCOUNTS_PER_ROW):
+            with cols[c]:
+                if idx_global < total:
+                    acc, group_name = all_accounts[idx_global]
+                    is_selected = (selected_account_id == acc.id)
+                    label = f"{'✅ ' if is_selected else ''}{acc.code}\n{acc.name}"
+                    btn_type = "primary" if is_selected else "secondary"
+                    if st.button(label, key=f"{PFX}acc_btn_{acc.id}",
+                                 type=btn_type, use_container_width=True):
+                        st.session_state[f"{PFX}selected_account"] = acc.id
+                        st.rerun()
+                    idx_global += 1
+                else:
+                    st.markdown(f'<div style="height:{BTN_MIN_H}px;"></div>', unsafe_allow_html=True)
     selected_account_id = st.session_state.get(f"{PFX}selected_account")
+    linked_invoice_number = None
+    linked_party_name = None
     if selected_account_id:
         acc = db.query(Account).filter(Account.id == selected_account_id).first()
         if acc:
             st.markdown("---")
             st.success(f"✅ **الحساب المختار:** `{acc.code}` — {acc.name}")
+            is_customer = _is_customer_account(acc)
+            is_supplier = _is_supplier_account(acc)
+            if is_customer:
+                st.markdown("### 🔗 ربط الحركة بعميل وفاتورة (اختياري)")
+                customers = db.query(models.Party).filter(models.Party.type == 'customer').order_by(models.Party.name).all()
+                if not customers:
+                    st.warning("⚠️ لا يوجد عملاء مسجلين.")
+                else:
+                    party_opts = {p.id: p.name for p in customers}
+                    linked_party_id = st.selectbox("اختر العميل:",
+                                                    options=[None] + list(party_opts.keys()),
+                                                    format_func=lambda x: "— بدون ربط —" if x is None else party_opts[x],
+                                                    key=f"{PFX}linked_party")
+                    if linked_party_id:
+                        linked_party_name = party_opts.get(linked_party_id)
+                        invoices = db.query(models.Invoice).filter(
+                            models.Invoice.party_id == linked_party_id,
+                            models.Invoice.type == 'sale'
+                        ).order_by(models.Invoice.date.desc()).all()
+                        if invoices:
+                            status_map = {"paid": "✅ مدفوعة", "partial": "🟡 جزئية", "pending": "🔴 غير مدفوعة"}
+                            inv_opts = {"— بدون ربط بفاتورة —": None}
+                            for inv in invoices:
+                                status_ar = status_map.get((inv.status or "").lower(), inv.status or "—")
+                                net = float(inv.net_amount or 0)
+                                inv_opts[f"{inv.invoice_number} — {net:,.2f} ج.م — {status_ar}"] = inv.invoice_number
+                            selected_inv_label = st.selectbox("اختر الفاتورة (اختياري):",
+                                                              options=list(inv_opts.keys()),
+                                                              key=f"{PFX}linked_inv")
+                            linked_invoice_number = inv_opts.get(selected_inv_label)
+            elif is_supplier:
+                st.markdown("### 🔗 ربط الحركة بمورد وفاتورة (اختياري)")
+                suppliers = db.query(models.Party).filter(models.Party.type == 'supplier').order_by(models.Party.name).all()
+                if not suppliers:
+                    st.warning("⚠️ لا يوجد موردون مسجلون.")
+                else:
+                    party_opts = {p.id: p.name for p in suppliers}
+                    linked_party_id = st.selectbox("اختر المورد:",
+                                                    options=[None] + list(party_opts.keys()),
+                                                    format_func=lambda x: "— بدون ربط —" if x is None else party_opts[x],
+                                                    key=f"{PFX}linked_party")
+                    if linked_party_id:
+                        linked_party_name = party_opts.get(linked_party_id)
+                        invoices = db.query(models.Invoice).filter(
+                            models.Invoice.party_id == linked_party_id,
+                            models.Invoice.type == 'purchase'
+                        ).order_by(models.Invoice.date.desc()).all()
+                        if invoices:
+                            status_map = {"paid": "✅ مدفوعة", "partial": "🟡 جزئية", "pending": "🔴 غير مدفوعة"}
+                            inv_opts = {"— بدون ربط بفاتورة —": None}
+                            for inv in invoices:
+                                status_ar = status_map.get((inv.status or "").lower(), inv.status or "—")
+                                net = float(inv.net_amount or 0)
+                                inv_opts[f"{inv.invoice_number} — {net:,.2f} ج.م — {status_ar}"] = inv.invoice_number
+                            selected_inv_label = st.selectbox("اختر الفاتورة (اختياري):",
+                                                              options=list(inv_opts.keys()),
+                                                              key=f"{PFX}linked_inv")
+                            linked_invoice_number = inv_opts.get(selected_inv_label)
     else:
         st.warning("👆 اضغط على مربع حساب لاختياره.")
-
     st.markdown("### 4️⃣ تفاصيل الحركة")
-
     col_d, col_t = st.columns(2)
     with col_d:
-        cm_date = st.date_input(
-            "التاريخ:", value=datetime.now().date(),
-            key=f"{PFX}date",
-        )
+        cm_date = st.date_input("التاريخ:", value=datetime.now().date(), key=f"{PFX}date")
     with col_t:
-        cm_time = st.time_input(
-            "الوقت:", value=datetime.now().time(),
-            key=f"{PFX}time",
-        )
-
-    amount = st.number_input(
-        "المبلغ (ج.م):", min_value=0.01, step=100.0, value=100.0,
-        format="%.2f", key=f"{PFX}amount",
-    )
-    description = st.text_area(
-        "الوصف:", placeholder="مثال: نصيب الأخ في بضاعة أونلاين",
-        key=f"{PFX}desc",
-    )
-    ref_no = st.text_input("رقم المرجع (اختياري):", key=f"{PFX}ref")
+        cm_time = st.time_input("الوقت:", value=datetime.now().time(), key=f"{PFX}time")
+    amount = st.number_input("المبلغ (ج.م):", min_value=0.01, step=100.0, value=100.0,
+                              format="%.2f", key=f"{PFX}amount")
+    description = st.text_area("الوصف (اختياري):", placeholder="اتركه فارغاً ليُولَّد تلقائياً", key=f"{PFX}desc")
+    ref_no = st.text_input("رقم المرجع (اختياري):", value=linked_invoice_number or "", key=f"{PFX}ref")
     notes = st.text_area("ملاحظات (اختياري):", key=f"{PFX}notes", height=60)
-
-    if st.button("💾 حفظ الحركة", type="primary", use_container_width=True,
-                 key=f"{PFX}save"):
+    if st.button("💾 حفظ الحركة", type="primary", use_container_width=True, key=f"{PFX}save"):
         if not selected_account_id:
             st.error("❌ اختر الحساب المقابل أولاً.")
-        elif not description.strip():
-            st.error("❌ يرجى إدخال الوصف.")
         elif amount <= 0:
             st.error("❌ المبلغ يجب أن يكون أكبر من صفر.")
         else:
             try:
                 cm_dt = datetime.combine(cm_date, cm_time)
                 check_period_open(cm_dt, entity="تسجيل حركة خزينة")
-
+                final_desc = description.strip() if description else ""
+                if not final_desc:
+                    if linked_invoice_number:
+                        final_desc = f"مرتبط بالفاتورة {linked_invoice_number}"
+                        if linked_party_name:
+                            final_desc += f" — {linked_party_name}"
+                    else:
+                        final_desc = "حركة خزينة"
+                final_ref = ref_no.strip() if ref_no and ref_no.strip() else None
+                if not final_ref and linked_invoice_number:
+                    final_ref = linked_invoice_number
                 if direction == "in":
                     _create_cash_movement(
                         cash_box_id=int(selected_box_id),
                         counter_account_id=int(selected_account_id),
-                        amount=float(amount),
-                        description=description.strip(),
-                        direction="in",
-                        reference_number=ref_no or None,
-                        notes=notes or None,
-                        created_by=current_user_id,
-                        movement_date=cm_dt,
+                        amount=float(amount), description=final_desc, direction="in",
+                        reference_number=final_ref, notes=notes or None,
+                        created_by=current_user_id, movement_date=cm_dt,
                     )
                 else:
                     acc_obj = db.query(Account).filter(Account.id == selected_account_id).first()
                     if acc_obj.type == AccountType.EXPENSE:
                         cat = _get_or_create_category_for_account(db, acc_obj)
                         create_expense(
-                            category_id=cat.id,
-                            amount=float(amount),
-                            description=description.strip(),
-                            payment_method="cash",
-                            cash_box_id=int(selected_box_id),
-                            reference_number=ref_no or None,
-                            notes=notes or None,
-                            expense_date=cm_dt,
-                            created_by=current_user_id,
+                            category_id=cat.id, amount=float(amount), description=final_desc,
+                            payment_method="cash", cash_box_id=int(selected_box_id),
+                            reference_number=final_ref, notes=notes or None,
+                            expense_date=cm_dt, created_by=current_user_id,
                         )
                     else:
                         _create_cash_movement(
                             cash_box_id=int(selected_box_id),
                             counter_account_id=int(selected_account_id),
-                            amount=float(amount),
-                            description=description.strip(),
-                            direction="out",
-                            reference_number=ref_no or None,
-                            notes=notes or None,
-                            created_by=current_user_id,
-                            movement_date=cm_dt,
+                            amount=float(amount), description=final_desc, direction="out",
+                            reference_number=final_ref, notes=notes or None,
+                            created_by=current_user_id, movement_date=cm_dt,
                         )
-
                 direction_label = "وارد" if direction == "in" else "صادر"
                 st.success(f"✅ تم تسجيل حركة {direction_label} بمبلغ {amount:,.2f} ج.م")
                 st.balloons()
-
                 clear_form(PFX)
                 st.rerun()
             except Exception as e:
@@ -547,45 +684,50 @@ with tab1:
 
 
 # ==========================================
-# التبويب 2: سجل الحركات
+# التبويب 2: سجل الحركات + حذف مباشر
 # ==========================================
 with tab2:
     st.subheader("📋 سجل حركات الخزينة")
-
     col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
-        filter_dir = st.selectbox(
-            "الاتجاه:", ["الكل", "وارد فقط", "صادر فقط"],
-            key=f"{PFX}filter_dir",
-        )
+        filter_dir = st.selectbox("الاتجاه:", ["الكل", "وارد فقط", "صادر فقط"], key=f"{PFX}filter_dir")
     with col_f2:
-        start_filter = st.date_input(
-            "من تاريخ:", value=datetime.now().replace(day=1).date(),
-            key=f"{PFX}filter_start",
-        )
+        start_filter = st.date_input("من تاريخ:", value=datetime.now().replace(day=1).date(), key=f"{PFX}filter_start")
     with col_f3:
-        end_filter = st.date_input(
-            "إلى تاريخ:", value=datetime.now().date(),
-            key=f"{PFX}filter_end",
-        )
-
+        end_filter = st.date_input("إلى تاريخ:", value=datetime.now().date(), key=f"{PFX}filter_end")
+    col_f4, col_f5 = st.columns([1, 2])
+    with col_f4:
+        filter_counter_group = st.selectbox("📁 نوع الحساب المقابل:",
+                                             options=["— الكل —"] + ALL_GROUPS,
+                                             key=f"{PFX}filter_counter_grp")
+    with col_f5:
+        filter_search = st.text_input("🔎 بحث (كود/اسم الحساب أو الوصف):",
+                                       placeholder="مثال: 5000 أو مصروفات أو إيجار",
+                                       key=f"{PFX}filter_search")
     d = None
     if filter_dir == "وارد فقط":
         d = "in"
     elif filter_dir == "صادر فقط":
         d = "out"
-
     start_dt = datetime.combine(start_filter, datetime.min.time())
     end_dt = datetime.combine(end_filter, datetime.max.time())
-
-    movements = _get_movements(direction=d, start=start_dt, end=end_dt)
-
+    _nav_acc_id = st.session_state.get("_cm_nav_account_id")
+    _nav_party_id = st.session_state.get("_cm_nav_party_id")
+    if _nav_acc_id:
+        _acc = db.query(Account).filter(Account.id == _nav_acc_id).first()
+        if _acc:
+            st.info(f"🎯 **مفلتر من شجرة الحسابات** على: `{_acc.code}` — {_acc.name}")
+    movements = _get_movements(direction=d, start=start_dt, end=end_dt,
+                                counter_group=filter_counter_group, counter_search=filter_search,
+                                filter_account_id=_nav_acc_id, filter_party_id=_nav_party_id)
+    st.caption(f"📊 عدد الحركات المطابقة: **{len(movements)}**")
     if movements:
         rows = []
         total_in = 0.0
         total_out = 0.0
         for m in movements:
             det = _movement_details(m)
+            grp = _get_group_for_account(det.get("counter_acc")) or "—"
             if det["direction"] == "in":
                 total_in += det["amount"]
             else:
@@ -596,19 +738,17 @@ with tab2:
                 "التاريخ": m.date.strftime("%Y-%m-%d %H:%M") if m.date else "—",
                 "الاتجاه": "💰 وارد" if det["direction"] == "in" else "💸 صادر",
                 "الخزينة": det["cash_acc"].name if det["cash_acc"] else "—",
+                "النوع": grp,
                 "الطرف المقابل": f"{det['counter_acc'].code} — {det['counter_acc'].name}" if det["counter_acc"] else "—",
                 "المبلغ": det["amount"],
                 "الوصف": m.description or "—",
             })
         df = pd.DataFrame(rows)
-        st.dataframe(
-            df.drop(columns=["ID"]), use_container_width=True, hide_index=True,
-            column_config={
-                "المسلسل": st.column_config.TextColumn("المسلسل", width="small"),
-                "المبلغ": st.column_config.NumberColumn("المبلغ", format="%.2f"),
-            },
-        )
-
+        st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True,
+                     column_config={
+                         "المسلسل": st.column_config.TextColumn("المسلسل", width="small"),
+                         "المبلغ": st.column_config.NumberColumn("المبلغ", format="%.2f"),
+                     })
         c1, c2, c3 = st.columns(3)
         with c1:
             st.metric("إجمالي الوارد", f"{total_in:,.2f} ج.م")
@@ -616,8 +756,62 @@ with tab2:
             st.metric("إجمالي الصادر", f"{total_out:,.2f} ج.م")
         with c3:
             st.metric("الصافي", f"{total_in - total_out:,.2f} ج.م")
-
-        st.info("💡 للتعديل أو الحذف، انتقل إلى تبويب **⚙️ تعديل / حذف حركة**.")
+        st.markdown("---")
+        # ⭐ حذف مباشر من السجل
+        if can_modify():
+            st.markdown("### 🗑 حذف حركة من السجل")
+            del_opts = {}
+            for m in movements:
+                det = _movement_details(m)
+                serial = movement_serial("CM", m.id)
+                arrow = "💰" if det["direction"] == "in" else "💸"
+                date_s = m.date.strftime("%Y-%m-%d %H:%M") if m.date else "—"
+                desc_s = _extract_original_desc(m.description or "")[:50]
+                counter_s = ""
+                if det["counter_acc"]:
+                    counter_s = f" — {det['counter_acc'].code} {det['counter_acc'].name}"
+                del_opts[m.id] = f"{serial} — {arrow} — {det['amount']:,.2f} ج.م — {date_s}{counter_s} — {desc_s}"
+            del_m_id = st.selectbox("اختر الحركة لحذفها:", options=list(del_opts.keys()),
+                                     format_func=lambda x: del_opts[x], key=f"{PFX}log_del_select")
+            if del_m_id:
+                del_entry = db.query(models.JournalEntry).filter(
+                    models.JournalEntry.id == del_m_id
+                ).first()
+                if del_entry:
+                    det_del = _movement_details(del_entry)
+                    del_serial = movement_serial("CM", del_entry.id)
+                    with st.container(border=True):
+                        dcol1, dcol2, dcol3 = st.columns(3)
+                        with dcol1:
+                            st.metric("الاتجاه", "💰 وارد" if det_del["direction"] == "in" else "💸 صادر")
+                        with dcol2:
+                            st.metric("المبلغ", f"{det_del['amount']:,.2f} ج.م")
+                        with dcol3:
+                            st.metric("التاريخ", del_entry.date.strftime("%Y-%m-%d") if del_entry.date else "—")
+                        st.caption(f"**المسلسل:** `{del_serial}`")
+                        if det_del["counter_acc"]:
+                            st.caption(f"**الطرف المقابل:** {det_del['counter_acc'].code} — {det_del['counter_acc'].name}")
+                        st.caption(f"**الوصف:** {(del_entry.description or '—')[:150]}")
+                        st.warning(f"⚠️ سيتم حذف الحركة `{del_serial}` نهائياً مع قيودها المحاسبية.")
+                        confirm_log = st.checkbox("✅ أؤكد الحذف النهائي من السجل",
+                                                   key=f"{PFX}log_confirm_del_{del_m_id}")
+                        if st.button("🗑 حذف نهائي", type="primary",
+                                     disabled=not confirm_log,
+                                     use_container_width=True,
+                                     key=f"{PFX}log_del_btn_{del_m_id}"):
+                            try:
+                                _delete_movement(del_entry)
+                                st.success(f"✅ تم حذف الحركة `{del_serial}` بنجاح!")
+                                st.balloons()
+                                st.session_state.pop(f"{PFX}log_confirm_del_{del_m_id}", None)
+                                st.session_state.pop(f"{PFX}log_del_select", None)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ خطأ: {e}")
+        else:
+            st.info("⛔ **الحذف للمدير فقط.**")
+        st.markdown("---")
+        st.info("💡 للتعديل الكامل، انتقل إلى تبويب **⚙️ تعديل / حذف حركة**.")
     else:
         st.info("لا توجد حركات في الفترة المحددة.")
 
@@ -627,35 +821,34 @@ with tab2:
 # ==========================================
 with tab3:
     st.subheader("⚙️ تعديل / حذف حركة خزينة")
-
     col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
-        edit_dir = st.selectbox(
-            "الاتجاه:", ["الكل", "وارد فقط", "صادر فقط"],
-            key=f"{PFX}ef_dir",
-        )
+        edit_dir = st.selectbox("الاتجاه:", ["الكل", "وارد فقط", "صادر فقط"], key=f"{PFX}ef_dir")
     with col_f2:
-        edit_start = st.date_input(
-            "من تاريخ:", value=(datetime.now().replace(day=1)).date(),
-            key=f"{PFX}ef_start",
-        )
+        edit_start = st.date_input("من تاريخ:", value=(datetime.now().replace(day=1)).date(), key=f"{PFX}ef_start")
     with col_f3:
-        edit_end = st.date_input(
-            "إلى تاريخ:", value=datetime.now().date(),
-            key=f"{PFX}ef_end",
-        )
-
+        edit_end = st.date_input("إلى تاريخ:", value=datetime.now().date(), key=f"{PFX}ef_end")
+    col_f4, col_f5 = st.columns([1, 2])
+    with col_f4:
+        edit_counter_group = st.selectbox("📁 نوع الحساب المقابل:",
+                                           options=["— الكل —"] + ALL_GROUPS,
+                                           key=f"{PFX}ef_counter_grp")
+    with col_f5:
+        edit_search = st.text_input("🔎 بحث (كود/اسم الحساب أو الوصف):",
+                                     placeholder="مثال: 5000 أو مصروفات أو إيجار",
+                                     key=f"{PFX}ef_search")
     d_edit = None
     if edit_dir == "وارد فقط":
         d_edit = "in"
     elif edit_dir == "صادر فقط":
         d_edit = "out"
-
     edit_start_dt = datetime.combine(edit_start, datetime.min.time())
     edit_end_dt = datetime.combine(edit_end, datetime.max.time())
-
-    edit_movements = _get_movements(direction=d_edit, start=edit_start_dt, end=edit_end_dt)
-
+    edit_movements = _get_movements(direction=d_edit, start=edit_start_dt, end=edit_end_dt,
+                                     counter_group=edit_counter_group, counter_search=edit_search,
+                                     filter_account_id=st.session_state.get("_cm_nav_account_id"),
+                                     filter_party_id=st.session_state.get("_cm_nav_party_id"))
+    st.caption(f"📊 عدد الحركات المطابقة: **{len(edit_movements)}**")
     if not edit_movements:
         st.info("لا توجد حركات في الفترة المحددة.")
     else:
@@ -667,134 +860,119 @@ with tab3:
             date_s = m.date.strftime("%Y-%m-%d") if m.date else "—"
             desc_s = _extract_original_desc(m.description or "")[:40]
             m_opts[m.id] = f"{serial} — {arrow} — {det['amount']:,.2f} ج.م — {date_s} — {desc_s}"
-
-        selected_m_id = st.selectbox(
-            "اختر الحركة (بالمسلسل):",
-            options=list(m_opts.keys()),
-            format_func=lambda x: m_opts[x],
-            key=f"{PFX}edit_select",
-        )
-
+        selected_m_id = st.selectbox("اختر الحركة (بالمسلسل):", options=list(m_opts.keys()),
+                                      format_func=lambda x: m_opts[x], key=f"{PFX}edit_select")
         if selected_m_id:
             entry = db.query(models.JournalEntry).filter(
                 models.JournalEntry.id == selected_m_id
             ).first()
-
             if entry:
                 det = _movement_details(entry)
                 serial = movement_serial("CM", entry.id)
-
                 st.markdown(f"### 📄 تفاصيل الحركة **`{serial}`**")
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    st.metric("الاتجاه",
-                              "💰 وارد" if det["direction"] == "in" else "💸 صادر")
+                    st.metric("الاتجاه", "💰 وارد" if det["direction"] == "in" else "💸 صادر")
                 with c2:
                     st.metric("المبلغ الحالي", f"{det['amount']:,.2f} ج.م")
                 with c3:
-                    st.metric("التاريخ",
-                              entry.date.strftime("%Y-%m-%d") if entry.date else "—")
-
+                    st.metric("التاريخ", entry.date.strftime("%Y-%m-%d") if entry.date else "—")
                 st.write(f"**الخزينة:** {det['cash_acc'].name if det['cash_acc'] else '—'}")
                 if det["counter_acc"]:
                     st.write(f"**الطرف المقابل:** {det['counter_acc'].code} — {det['counter_acc'].name}")
-                else:
-                    st.write("**الطرف المقابل:** —")
-
                 original_desc = _extract_original_desc(entry.description or "")
-
                 st.markdown("---")
                 st.markdown("### ✏️ تعديل البيانات")
-                st.warning(
-                    "⚠️ يمكنك تعديل **المبلغ، التاريخ، الوصف، والملاحظات**. "
-                    "لتغيير **الاتجاه** أو **الحساب المقابل** → احذف وأعد الإنشاء."
-                )
-
-                with st.form(f"{PFX}edit_form_{entry.id}"):
-                    new_amount = st.number_input(
-                        "المبلغ الجديد (ج.م):",
-                        min_value=0.01,
-                        value=float(det["amount"]),
-                        step=100.0, format="%.2f",
-                        key=f"{PFX}edit_amount_{entry.id}",
-                    )
-
-                    col_d, col_t = st.columns(2)
-                    with col_d:
-                        new_date = st.date_input(
-                            "التاريخ:",
-                            value=entry.date.date() if entry.date else datetime.now().date(),
-                            key=f"{PFX}edit_date_{entry.id}",
-                        )
-                    with col_t:
-                        new_time = st.time_input(
-                            "الوقت:",
-                            value=entry.date.time() if entry.date else datetime.now().time(),
-                            key=f"{PFX}edit_time_{entry.id}",
-                        )
-
-                    new_desc = st.text_area(
-                        "الوصف:",
-                        value=original_desc,
-                        height=68,
-                        key=f"{PFX}edit_desc_{entry.id}",
-                    )
-
-                    new_notes = st.text_area(
-                        "ملاحظات إضافية (اختياري):",
-                        value="",
-                        height=68,
-                        help="ستُضاف إلى نهاية الوصف بين [ ]",
-                        key=f"{PFX}edit_notes_{entry.id}",
-                    )
-
-                    submitted = st.form_submit_button(
-                        "💾 حفظ التعديلات", type="primary", use_container_width=True,
-                    )
-
-                if submitted:
-                    if not new_desc.strip():
-                        st.error("❌ الوصف مطلوب.")
-                    elif new_amount <= 0:
+                counter_groups_edit = _get_counter_account_groups()
+                all_accounts_edit = _flatten_accounts(counter_groups_edit)
+                st.markdown("##### 🎯 الحساب المقابل (يمكن تغييره)")
+                col_fg, col_fs = st.columns([1, 2])
+                with col_fg:
+                    inner_group_filter = st.selectbox("📁 نوع الحساب:",
+                                                       options=["— الكل —"] + list(counter_groups_edit.keys()),
+                                                       key=f"{PFX}inner_grp_{entry.id}")
+                with col_fs:
+                    inner_search = st.text_input("🔎 بحث الحساب:", placeholder="كود أو اسم",
+                                                  key=f"{PFX}inner_search_{entry.id}")
+                filtered = _filter_accounts(all_accounts_edit, inner_group_filter, inner_search)
+                current_acc_id = det.get("counter_acc_id")
+                current_present = any(acc.id == current_acc_id for acc, _ in filtered)
+                if not current_present:
+                    for acc, grp in all_accounts_edit:
+                        if acc.id == current_acc_id:
+                            filtered = [(acc, grp)] + filtered
+                            break
+                st.caption(f"📊 عدد الحسابات: **{len(filtered)}** من {len(all_accounts_edit)}")
+                if not filtered:
+                    st.warning("⚠️ لا توجد حسابات مطابقة.")
+                    acc_options = {}
+                else:
+                    acc_options = {}
+                    for _acc, _grp in filtered:
+                        acc_options[f"{_acc.code} — {_acc.name}  ({_grp})"] = _acc.id
+                option_labels = list(acc_options.keys())
+                current_index = 0
+                for i, lbl in enumerate(option_labels):
+                    if acc_options[lbl] == current_acc_id:
+                        current_index = i
+                        break
+                if option_labels:
+                    selected_acc_label = st.selectbox("اختر الحساب المقابل:", options=option_labels,
+                                                       index=current_index,
+                                                       key=f"{PFX}edit_counter_{entry.id}")
+                    new_counter_account_id = acc_options.get(selected_acc_label)
+                else:
+                    new_counter_account_id = current_acc_id
+                    st.info("الحساب الحالي محفوظ.")
+                st.markdown("---")
+                st.markdown("##### 💰 المبلغ والتاريخ")
+                new_amount = st.number_input("المبلغ الجديد (ج.م):", min_value=0.01,
+                                              value=float(det["amount"]), step=100.0,
+                                              format="%.2f", key=f"{PFX}edit_amount_{entry.id}")
+                col_d, col_t = st.columns(2)
+                with col_d:
+                    new_date = st.date_input("التاريخ:",
+                                              value=entry.date.date() if entry.date else datetime.now().date(),
+                                              key=f"{PFX}edit_date_{entry.id}")
+                with col_t:
+                    new_time = st.time_input("الوقت:",
+                                              value=entry.date.time() if entry.date else datetime.now().time(),
+                                              key=f"{PFX}edit_time_{entry.id}")
+                st.markdown("##### 📝 الوصف والملاحظات")
+                new_desc = st.text_area("الوصف (اختياري):", value=original_desc, height=68,
+                                         key=f"{PFX}edit_desc_{entry.id}")
+                new_notes = st.text_area("ملاحظات إضافية (اختياري):", value="", height=68,
+                                          key=f"{PFX}edit_notes_{entry.id}")
+                if st.button("💾 حفظ التعديلات", type="primary", use_container_width=True,
+                             key=f"{PFX}save_edit_{entry.id}"):
+                    if new_amount <= 0:
                         st.error("❌ المبلغ يجب أن يكون أكبر من صفر.")
+                    elif not new_counter_account_id:
+                        st.error("❌ اختر الحساب المقابل.")
                     else:
                         try:
                             new_dt = datetime.combine(new_date, new_time)
-                            _update_movement(
-                                entry_id=entry.id,
-                                new_amount=float(new_amount),
-                                new_date=new_dt,
-                                new_desc=new_desc.strip(),
-                                new_notes=new_notes.strip() or None,
-                            )
+                            final_new_desc = new_desc.strip() if new_desc else "حركة خزينة"
+                            _update_movement(entry_id=entry.id, new_amount=float(new_amount),
+                                              new_date=new_dt, new_desc=final_new_desc,
+                                              new_counter_account_id=new_counter_account_id,
+                                              new_notes=new_notes.strip() or None)
                             st.success(f"✅ تم تحديث الحركة `{serial}` بنجاح!")
-
                             clear_form(PFX)
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")
                             st.code(traceback.format_exc())
-
                 st.markdown("---")
                 st.markdown("### 🗑 حذف الحركة")
-
                 if can_modify():
                     st.error(f"⚠️ سيتم حذف الحركة `{serial}` نهائيًا مع قيودها المحاسبية.")
-                    confirm = st.checkbox(
-                        "✅ أؤكد الحذف النهائي",
-                        key=f"{PFX}confirm_del_{entry.id}",
-                    )
-                    if st.button(
-                        "🗑 حذف الحركة",
-                        type="secondary",
-                        disabled=not confirm,
-                        use_container_width=True,
-                        key=f"{PFX}del_btn_{entry.id}",
-                    ):
+                    confirm = st.checkbox("✅ أؤكد الحذف النهائي", key=f"{PFX}confirm_del_{entry.id}")
+                    if st.button("🗑 حذف الحركة", type="secondary", disabled=not confirm,
+                                 use_container_width=True, key=f"{PFX}del_btn_{entry.id}"):
                         try:
                             _delete_movement(entry)
                             st.success(f"✅ تم حذف الحركة `{serial}`.")
-
                             clear_form(PFX)
                             st.rerun()
                         except Exception as e:
@@ -809,34 +987,20 @@ with tab3:
 # ==========================================
 with tab4:
     st.subheader("📊 تقرير حركات الخزينة")
-
     col1, col2 = st.columns(2)
     with col1:
-        rep_start = st.date_input(
-            "من تاريخ:", value=datetime.now().replace(day=1).date(),
-            key=f"{PFX}rep_start",
-        )
+        rep_start = st.date_input("من تاريخ:", value=datetime.now().replace(day=1).date(), key=f"{PFX}rep_start")
     with col2:
-        rep_end = st.date_input(
-            "إلى تاريخ:", value=datetime.now().date(),
-            key=f"{PFX}rep_end",
-        )
-
+        rep_end = st.date_input("إلى تاريخ:", value=datetime.now().date(), key=f"{PFX}rep_end")
     if st.button("📊 عرض التقرير", type="primary", key=f"{PFX}show_report"):
         s = datetime.combine(rep_start, datetime.min.time())
         e = datetime.combine(rep_end, datetime.max.time())
-
         movements = _get_movements(start=s, end=e)
-        total_in = sum(
-            _movement_details(m)["amount"] for m in movements
-            if _movement_details(m)["direction"] == "in"
-        )
-        total_out = sum(
-            _movement_details(m)["amount"] for m in movements
-            if _movement_details(m)["direction"] == "out"
-        )
+        total_in = sum(_movement_details(m)["amount"] for m in movements
+                        if _movement_details(m)["direction"] == "in")
+        total_out = sum(_movement_details(m)["amount"] for m in movements
+                         if _movement_details(m)["direction"] == "out")
         net = total_in - total_out
-
         c1, c2, c3 = st.columns(3)
         with c1:
             st.metric("إجمالي الوارد", f"{total_in:,.2f} ج.م")
@@ -846,7 +1010,6 @@ with tab4:
             st.metric("الصافي", f"{net:,.2f} ج.م",
                       delta="زيادة" if net >= 0 else "نقص",
                       delta_color="normal" if net >= 0 else "inverse")
-
         in_by_counter = {}
         out_by_counter = {}
         for m in movements:
@@ -858,7 +1021,6 @@ with tab4:
                 in_by_counter[key] = in_by_counter.get(key, 0) + det["amount"]
             else:
                 out_by_counter[key] = out_by_counter.get(key, 0) + det["amount"]
-
         st.markdown("---")
         col_a, col_b = st.columns(2)
         with col_a:

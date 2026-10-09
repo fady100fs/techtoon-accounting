@@ -1,528 +1,237 @@
+﻿# -*- coding: utf-8 -*-
 """
-cache_helpers.py — طبقة Caching موحّدة
-الدوال تجلب engine داخلياً، ولا تحتاج تمريره من الصفحات.
+cache_helpers.py — TTL طويل محلياً، قصير سحابياً.
 """
-
+import os
 import streamlit as st
-import hashlib
-from functools import wraps
 
 
-# ============ إعدادات TTL ============
 class TTL:
     VERY_SHORT = 30
-    SHORT = 120
-    MEDIUM = 300
-    LONG = 900
-    VERY_LONG = 3600
+    SHORT      = 120
+    MEDIUM     = 300
+    LONG       = 900
+    VERY_LONG  = 3600
 
 
-def make_key(*args, **kwargs) -> str:
-    raw = str(args) + str(sorted(kwargs.items()))
-    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
+def _get_ttl():
+    mode = os.getenv("DEPLOY_MODE", "cloud").lower()
+    if mode == "local":
+        return int(os.getenv("LOCAL_CACHE_TTL", "1800"))
+    return int(os.getenv("CLOUD_CACHE_TTL", "120"))
 
 
-# ============ مسح الكاش ============
-def clear_all_caches():
+CACHE_TTL = _get_ttl()
+
+
+def _get_read_session():
+    from database import get_read_session
+    return get_read_session()
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_items_with_stock(limit: int = 5000):
+    """Items with all fields expected by pages."""
+    import models
+    from sqlalchemy import func, case
+
+    db = _get_read_session()
+    try:
+        items = db.query(models.Item).limit(limit).all()
+        if not items:
+            return []
+
+        cat_map = {}
+        try:
+            cat_map = {c.id: (c.name or "") for c in db.query(models.Category).all()}
+        except Exception:
+            pass
+
+        stock_map = {}
+        try:
+            rows = db.query(
+                models.InventoryMovement.item_id,
+                func.sum(case(
+                    (models.InventoryMovement.type == "in", models.InventoryMovement.quantity),
+                    else_=-models.InventoryMovement.quantity
+                )).label("balance")
+            ).group_by(models.InventoryMovement.item_id).all()
+            stock_map = {iid: float(b or 0) for iid, b in rows}
+        except Exception:
+            try:
+                rows2 = db.query(
+                    models.StockLevel.item_id,
+                    func.coalesce(func.sum(models.StockLevel.quantity), 0)
+                ).group_by(models.StockLevel.item_id).all()
+                stock_map = {iid: float(q or 0) for iid, q in rows2}
+            except Exception:
+                pass
+
+        result = []
+        for r in items:
+            item_id = getattr(r, "id", None)
+            cat_id = getattr(r, "category_id", None)
+            result.append({
+                "id": item_id,
+                "name": getattr(r, "name", "") or "",
+                "code": getattr(r, "code", "") or "",
+                "barcode": getattr(r, "barcode", "") or "",
+                "category_id": cat_id,
+                "category_name": cat_map.get(cat_id, "N/A"),
+                "cost_price": float(getattr(r, "cost_price", 0) or 0),
+                "sell_price": float(getattr(r, "sell_price", 0) or 0),
+                "avg_cost_price": float(getattr(r, "avg_cost_price", 0) or 0),
+                "is_kit": bool(getattr(r, "is_kit", False)),
+                "min_stock": float(getattr(r, "min_stock", 0) or 0),
+                "current_stock": float(stock_map.get(item_id, 0.0)),
+                "total_purchased_qty": float(getattr(r, "total_purchased_qty", 0) or 0),
+                "price": float(getattr(r, "sell_price", 0) or 0),
+                "unit": getattr(r, "unit", "") or "",
+            })
+        return result
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_invoices_index(limit: int = 500):
+    import models
+    db = _get_read_session()
+    try:
+        rows = db.query(models.Invoice).order_by(models.Invoice.id.desc()).limit(limit).all()
+        return [{
+            "id": r.id,
+            "number": getattr(r, "invoice_number", None) or getattr(r, "number", None),
+            "date": getattr(r, "date", None),
+            "party_id": getattr(r, "party_id", None),
+            "total": float(getattr(r, "net_amount", 0) or getattr(r, "total_amount", 0) or 0),
+            "type": getattr(r, "type", None),
+            "status": getattr(r, "status", None),
+        } for r in rows]
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_payments_index(limit: int = 500):
+    import models
+    db = _get_read_session()
+    try:
+        rows = db.query(models.Payment).order_by(models.Payment.id.desc()).limit(limit).all()
+        return [{
+            "id": r.id,
+            "number": getattr(r, "reference_number", None),
+            "date": getattr(r, "date", None),
+            "party_id": getattr(r, "party_id", None),
+            "amount": float(getattr(r, "amount", 0) or 0),
+            "method": getattr(r, "payment_method", None),
+            "type": getattr(r, "payment_type", None),
+        } for r in rows]
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_dashboard_kpis():
+    import models
+    from sqlalchemy import func
+    db = _get_read_session()
+    try:
+        kpis = {}
+        kpis["invoices_count"] = db.query(func.count(models.Invoice.id)).scalar() or 0
+        kpis["parties_count"]  = db.query(func.count(models.Party.id)).scalar() or 0
+        kpis["items_count"]    = db.query(func.count(models.Item.id)).scalar() or 0
+        total = db.query(func.coalesce(func.sum(models.Invoice.net_amount), 0)).scalar()
+        kpis["invoices_total"] = float(total or 0)
+        total_pay = db.query(func.coalesce(func.sum(models.Payment.amount), 0)).scalar()
+        kpis["payments_total"] = float(total_pay or 0)
+        return kpis
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_stock_map():
+    import models
+    from sqlalchemy import func, case
+    db = _get_read_session()
+    try:
+        rows = db.query(
+            models.InventoryMovement.item_id,
+            func.sum(case(
+                (models.InventoryMovement.type == "in", models.InventoryMovement.quantity),
+                else_=-models.InventoryMovement.quantity
+            )).label("balance")
+        ).group_by(models.InventoryMovement.item_id).all()
+        return {iid: float(b or 0) for iid, b in rows}
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_inventory_summary():
+    import models
+    from sqlalchemy import func
+    db = _get_read_session()
+    try:
+        rows = db.query(
+            models.StockLevel.warehouse_id,
+            func.count(func.distinct(models.StockLevel.item_id)).label("items"),
+            func.coalesce(func.sum(models.StockLevel.quantity), 0).label("total_qty"),
+        ).group_by(models.StockLevel.warehouse_id).all()
+        return [{
+            "warehouse_id": r.warehouse_id,
+            "items": int(r.items or 0),
+            "total_qty": float(r.total_qty or 0),
+        } for r in rows]
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_active_categories():
+    """يرجع قائمة tuples: [(id, name), ...] — حسب ما تتوقعه الصفحات."""
+    import models
+    db = _get_read_session()
+    try:
+        rows = db.query(models.Category).order_by(models.Category.name).all()
+        return [(r.id, (r.name or "")) for r in rows]
+    finally:
+        db.close()
+
+
+
+def invalidate_cache():
     st.cache_data.clear()
-    st.cache_resource.clear()
 
 
+def invalidate_and_sync():
+    invalidate_cache()
+    try:
+        from database import is_local_mode
+        if is_local_mode():
+            import threading
+            from sync_manager import full_sync
+            threading.Thread(target=full_sync, daemon=True).start()
+    except Exception:
+        pass
+
+# ===== Aliases for backward compatibility =====
 def invalidate_all():
-    clear_all_caches()
+    """Alias for invalidate_cache (legacy name)."""
+    return invalidate_cache()
 
 
-def invalidate(prefix: str = None):
-    clear_all_caches()
+def clear_all_cache():
+    """Alias for invalidate_cache."""
+    return invalidate_cache()
 
 
-def clear_cache_by_prefix(prefix: str):
-    st.cache_data.clear()
+def clear_cache():
+    """Alias for invalidate_cache."""
+    return invalidate_cache()
 
 
-def cached_data(ttl: int = TTL.MEDIUM, show_spinner: bool = False):
-    def decorator(func):
-        @st.cache_data(ttl=ttl, show_spinner=show_spinner)
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-        return wrapper
-    return decorator
-
-
-# ============ محرك قاعدة البيانات الداخلي ============
-def _get_engine():
-    try:
-        from database import engine
-        return engine
-    except Exception:
-        return None
-
-
-# ============ العملات ============
-@st.cache_data(ttl=TTL.VERY_LONG, show_spinner=False)
-def get_currencies_cached(_engine=None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text(
-                "SELECT id, code, name, symbol FROM currencies ORDER BY id"
-            )).fetchall()
-        return [dict(r._mapping) for r in rows]
-    except Exception:
-        return []
-
-
-# ============ شجرة الحسابات ============
-@st.cache_data(ttl=TTL.LONG, show_spinner=False)
-def get_accounts_tree_cached(_engine=None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text(
-                "SELECT id, code, name, parent_id, type FROM accounts ORDER BY code"
-            )).fetchall()
-        return [dict(r._mapping) for r in rows]
-    except Exception:
-        return []
-
-
-# ============ العملاء والموردين ============
-@st.cache_data(ttl=TTL.SHORT, show_spinner=False)
-def get_parties_cached(_engine=None, party_type: str = None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            if party_type:
-                rows = conn.execute(text(
-                    "SELECT id, name, type, phone, address, credit_limit "
-                    "FROM parties WHERE type=:t ORDER BY name"
-                ), {"t": party_type}).fetchall()
-            else:
-                rows = conn.execute(text(
-                    "SELECT id, name, type, phone, address, credit_limit "
-                    "FROM parties ORDER BY name"
-                )).fetchall()
-        return [dict(r._mapping) for r in rows]
-    except Exception:
-        return []
-
-
-# ============ الأصناف ============
-@st.cache_data(ttl=TTL.SHORT, show_spinner=False)
-def get_items_cached(_engine=None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text(
-                "SELECT id, barcode, name, cost_price, sell_price, "
-                "min_stock, is_kit, category_id "
-                "FROM items ORDER BY name"
-            )).fetchall()
-        return [dict(r._mapping) for r in rows]
-    except Exception:
-        return []
-
-
-# ============ الخزائن ============
-@st.cache_data(ttl=TTL.SHORT, show_spinner=False)
-def get_cash_boxes_cached(_engine=None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text(
-                "SELECT id, name, code FROM cash_boxes "
-                "WHERE is_active = true ORDER BY name"
-            )).fetchall()
-        return [dict(r._mapping) for r in rows]
-    except Exception:
-        try:
-            with engine.connect() as conn:
-                rows = conn.execute(text(
-                    "SELECT id, name, code FROM cash_boxes ORDER BY name"
-                )).fetchall()
-            return [dict(r._mapping) for r in rows]
-        except Exception:
-            return []
-
-
-# ============ التصنيفات النشطة ============
-@st.cache_data(ttl=TTL.SHORT, show_spinner=False)
-def get_active_categories(_engine=None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text(
-                "SELECT id, name FROM categories ORDER BY name"
-            )).fetchall()
-        return [dict(r._mapping) for r in rows]
-    except Exception:
-        return []
-
-
-# ============ الأصناف مع المخزون ============
-@st.cache_data(ttl=TTL.SHORT, show_spinner=False)
-def get_items_with_stock(_engine=None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT
-                    it.id,
-                    it.name,
-                    it.barcode,
-                    it.cost_price,
-                    it.sell_price,
-                    it.min_stock,
-                    it.is_kit,
-                    COALESCE(SUM(sl.quantity), 0) AS total_stock,
-                    COALESCE(SUM(sl.quantity), 0) AS current_stock
-                FROM items it
-                LEFT JOIN stock_levels sl ON sl.item_id = it.id
-                GROUP BY it.id, it.name, it.barcode, it.cost_price,
-                         it.sell_price, it.min_stock, it.is_kit
-                ORDER BY it.name
-            """)).fetchall()
-        return [dict(r._mapping) for r in rows]
-    except Exception:
-        try:
-            with engine.connect() as conn:
-                rows = conn.execute(text(
-                    "SELECT id, name, barcode, cost_price, sell_price, "
-                    "min_stock, is_kit, 0 AS total_stock, 0 AS current_stock "
-                    "FROM items ORDER BY name"
-                )).fetchall()
-            return [dict(r._mapping) for r in rows]
-        except Exception:
-            return []
-
-
-# ============ خريطة المخزون ============
-@st.cache_data(ttl=TTL.SHORT, show_spinner=False)
-def get_stock_map(_engine=None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return {}
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT item_id, COALESCE(SUM(quantity), 0) AS qty
-                FROM stock_levels
-                GROUP BY item_id
-            """)).fetchall()
-        return {r.item_id: float(r.qty) for r in rows}
-    except Exception:
-        return {}
-
-
-# ============ ملخّص المخزون ============
-@st.cache_data(ttl=TTL.MEDIUM, show_spinner=False)
-def get_inventory_summary(_engine=None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    result = {
-        "total_items": 0,
-        "total_value": 0.0,
-        "low_stock_count": 0,
-        "total_stock_qty": 0.0,
-    }
-    if engine is None:
-        return result
-    try:
-        with engine.connect() as conn:
-            try:
-                result["total_items"] = conn.execute(
-                    text("SELECT COUNT(*) FROM items")
-                ).scalar() or 0
-            except Exception:
-                pass
-            try:
-                row = conn.execute(text("""
-                    SELECT
-                        COALESCE(SUM(sl.quantity * it.cost_price), 0) AS total_value,
-                        COALESCE(SUM(sl.quantity), 0) AS total_qty
-                    FROM stock_levels sl
-                    JOIN items it ON it.id = sl.item_id
-                """)).fetchone()
-                if row:
-                    result["total_value"] = float(row.total_value or 0)
-                    result["total_stock_qty"] = float(row.total_qty or 0)
-            except Exception:
-                pass
-    except Exception:
-        pass
-    return result
-
-
-# ============ لوحة التحكم KPIs ============
-@st.cache_data(ttl=TTL.MEDIUM, show_spinner=False)
-def get_dashboard_kpis(_engine=None):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    result = {
-        "invoices_count": 0,
-        "invoices_total": 0.0,
-        "total_sales": 0.0,
-        "total_purchases": 0.0,
-        "monthly_sales": 0.0,
-        "monthly_purchases": 0.0,
-        "monthly_profit": 0.0,
-        "parties_count": 0,
-        "customers_count": 0,
-        "suppliers_count": 0,
-        "items_count": 0,
-        "payments_total": 0.0,
-        "expenses_total": 0.0,
-        "cash_balance": 0.0,
-        "low_stock_count": 0,
-        "profit": 0.0,
-        "net_profit": 0.0,
-    }
-    if engine is None:
-        return result
-    try:
-        with engine.connect() as conn:
-            # أعداد
-            for key, query in [
-                ("invoices_count", "SELECT COUNT(*) FROM invoices"),
-                ("parties_count", "SELECT COUNT(*) FROM parties"),
-                ("customers_count", "SELECT COUNT(*) FROM parties WHERE type='customer'"),
-                ("suppliers_count", "SELECT COUNT(*) FROM parties WHERE type='supplier'"),
-                ("items_count", "SELECT COUNT(*) FROM items"),
-            ]:
-                try:
-                    result[key] = conn.execute(text(query)).scalar() or 0
-                except Exception:
-                    pass
-
-            # إجماليات
-            for key, query in [
-                ("invoices_total", "SELECT COALESCE(SUM(net_amount), 0) FROM invoices"),
-                ("total_sales", "SELECT COALESCE(SUM(net_amount), 0) FROM invoices WHERE type='sale'"),
-                ("total_purchases", "SELECT COALESCE(SUM(net_amount), 0) FROM invoices WHERE type='purchase'"),
-                ("payments_total", "SELECT COALESCE(SUM(amount), 0) FROM payments"),
-                ("expenses_total", "SELECT COALESCE(SUM(amount), 0) FROM expenses"),
-            ]:
-                try:
-                    result[key] = float(conn.execute(text(query)).scalar() or 0)
-                except Exception:
-                    pass
-
-            # مبيعات ومشتريات الشهر
-            try:
-                result["monthly_sales"] = float(conn.execute(text("""
-                    SELECT COALESCE(SUM(net_amount), 0) FROM invoices
-                    WHERE type='sale'
-                    AND date >= DATE_TRUNC('month', CURRENT_DATE)
-                """)).scalar() or 0)
-            except Exception:
-                pass
-
-            try:
-                result["monthly_purchases"] = float(conn.execute(text("""
-                    SELECT COALESCE(SUM(net_amount), 0) FROM invoices
-                    WHERE type='purchase'
-                    AND date >= DATE_TRUNC('month', CURRENT_DATE)
-                """)).scalar() or 0)
-            except Exception:
-                pass
-
-            # الربح
-            result["profit"] = result["total_sales"] - result["expenses_total"]
-            result["net_profit"] = result["profit"]
-            result["monthly_profit"] = result["monthly_sales"]
-    except Exception:
-        pass
-    return result
-
-
-# ============ توافق خلفي ============
-@st.cache_data(ttl=TTL.MEDIUM, show_spinner=False)
-def get_dashboard_stats_cached(_engine=None, start_date: str = None, end_date: str = None):
-    return get_dashboard_kpis(_engine)
-
-
-# ============ فهرس الفواتير ============
-@st.cache_data(ttl=TTL.SHORT, show_spinner=False)
-def get_invoices_index(_engine=None, limit: int = 500):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT
-                    i.id,
-                    i.invoice_number,
-                    i.date,
-                    i.type,
-                    i.net_amount,
-                    i.total_amount,
-                    i.discount_amount,
-                    i.tax_amount,
-                    i.status,
-                    i.party_id,
-                    i.created_by,
-                    i.currency_id,
-                    p.name AS party_name,
-                    p.type AS party_type,
-                    u.full_name AS created_by_name,
-                    u.username AS created_by_username,
-                    c.symbol AS currency_symbol,
-                    c.code AS currency_code
-                FROM invoices i
-                LEFT JOIN parties p ON p.id = i.party_id
-                LEFT JOIN users u ON u.id = i.created_by
-                LEFT JOIN currencies c ON c.id = i.currency_id
-                ORDER BY i.date DESC NULLS LAST, i.id DESC
-                LIMIT :lim
-            """), {"lim": limit}).fetchall()
-
-            results = []
-            for r in rows:
-                d = dict(r._mapping)
-                try:
-                    paid = conn.execute(text("""
-                        SELECT COALESCE(SUM(amount), 0) FROM payments
-                        WHERE reference_number = :ref AND party_id = :pid
-                    """), {
-                        "ref": d.get("invoice_number"),
-                        "pid": d.get("party_id"),
-                    }).scalar() or 0
-                    d["paid_amount"] = float(paid)
-                except Exception:
-                    d["paid_amount"] = 0.0
-
-                net = float(d.get("net_amount") or 0)
-                d["remaining"] = max(0.0, net - d["paid_amount"])
-                d.setdefault("created_by_name", "—")
-                d.setdefault("created_by_username", "—")
-                d.setdefault("currency_symbol", "ج.م")
-                d.setdefault("currency_code", "EGP")
-                results.append(d)
-            return results
-    except Exception:
-        # fallback بدون joins
-        try:
-            with engine.connect() as conn:
-                rows = conn.execute(text("""
-                    SELECT
-                        i.id, i.invoice_number, i.date, i.type,
-                        i.net_amount, i.total_amount, i.discount_amount,
-                        i.tax_amount, i.status, i.party_id, i.created_by,
-                        i.currency_id,
-                        p.name AS party_name, p.type AS party_type,
-                        '—' AS created_by_name, '—' AS created_by_username,
-                        'ج.م' AS currency_symbol, 'EGP' AS currency_code
-                    FROM invoices i
-                    LEFT JOIN parties p ON p.id = i.party_id
-                    ORDER BY i.date DESC NULLS LAST, i.id DESC
-                    LIMIT :lim
-                """), {"lim": limit}).fetchall()
-                results = []
-                for r in rows:
-                    d = dict(r._mapping)
-                    d["paid_amount"] = 0.0
-                    d["remaining"] = max(0.0, float(d.get("net_amount") or 0))
-                    results.append(d)
-                return results
-        except Exception:
-            return []
-
-
-# ============ فهرس المدفوعات ============
-@st.cache_data(ttl=TTL.SHORT, show_spinner=False)
-def get_payments_index(_engine=None, limit: int = 500):
-    from sqlalchemy import text
-    engine = _engine or _get_engine()
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT
-                    pay.id,
-                    pay.date,
-                    pay.amount,
-                    pay.payment_type,
-                    pay.payment_method,
-                    pay.reference_number,
-                    pay.notes,
-                    pay.party_id,
-                    pay.cash_box_id,
-                    pay.currency_id,
-                    p.name AS party_name,
-                    cb.name AS cash_box_name,
-                    u.full_name AS created_by_name,
-                    c.symbol AS currency_symbol,
-                    c.code AS currency_code
-                FROM payments pay
-                LEFT JOIN parties p ON p.id = pay.party_id
-                LEFT JOIN cash_boxes cb ON cb.id = pay.cash_box_id
-                LEFT JOIN users u ON u.id = pay.created_by
-                LEFT JOIN currencies c ON c.id = pay.currency_id
-                ORDER BY pay.date DESC NULLS LAST, pay.id DESC
-                LIMIT :lim
-            """), {"lim": limit}).fetchall()
-
-            results = []
-            for r in rows:
-                d = dict(r._mapping)
-                d.setdefault("cash_box_name", "—")
-                d.setdefault("created_by_name", "—")
-                d.setdefault("currency_symbol", "ج.م")
-                d.setdefault("currency_code", "EGP")
-                results.append(d)
-            return results
-    except Exception:
-        try:
-            with engine.connect() as conn:
-                rows = conn.execute(text("""
-                    SELECT
-                        pay.id, pay.date, pay.amount, pay.payment_type,
-                        pay.payment_method, pay.reference_number, pay.notes,
-                        pay.party_id, pay.cash_box_id, pay.currency_id,
-                        p.name AS party_name,
-                        '—' AS cash_box_name, '—' AS created_by_name,
-                        'ج.م' AS currency_symbol, 'EGP' AS currency_code
-                    FROM payments pay
-                    LEFT JOIN parties p ON p.id = pay.party_id
-                    ORDER BY pay.date DESC NULLS LAST, pay.id DESC
-                    LIMIT :lim
-                """), {"lim": limit}).fetchall()
-            return [dict(r._mapping) for r in rows]
-        except Exception:
-            return []
-
-
-# ============ معلومات الكاش ============
-def show_cache_info():
-    with st.sidebar.expander("🗂️ معلومات الكاش"):
-        st.caption("استخدم هذا الزر عند تغيير البيانات:")
-        if st.button("🔄 مسح الكاش", use_container_width=True, key="cache_clear_btn"):
-            clear_all_caches()
-            st.success("✅ تم مسح الكاش")
-            st.rerun()
+def refresh_all():
+    """Alias for invalidate_and_sync."""
+    return invalidate_and_sync()

@@ -12,7 +12,56 @@ from feature_flags import (
 )
 from session_auth import restore_session, logout_user
 from form_manager import apply_pending_clears
+# sidebar.py — إضافات السرعة والمزامنة
+import os
+from datetime import datetime
 
+# ⭐ معلومات المزامنة (محلياً فقط)
+try:
+    if os.getenv("DEPLOY_MODE", "cloud").lower() == "local":
+        from sync_manager import get_sync_state, full_sync
+        from local_mirror import get_local_db_size_mb
+
+        _sync = get_sync_state()
+        _size = get_local_db_size_mb()
+
+        with st.sidebar:
+            st.markdown("---")
+            st.markdown("### 💾 حالة المزامنة")
+
+            if _sync["in_progress"]:
+                st.info("⏳ جاري المزامنة...")
+            elif _sync["ok"] and _sync["last_sync"]:
+                _ago = (datetime.now() - _sync["last_sync"]).total_seconds() / 60
+                _color = "🟢" if _ago < 35 else "🟡" if _ago < 60 else "🔴"
+                st.success(
+                    f"{_color} آخر مزامنة: "
+                    f"{_sync['last_sync'].strftime('%H:%M')} "
+                    f"(منذ {int(_ago)}د)"
+                )
+            else:
+                st.warning("⚠️ لم تتم المزامنة بعد")
+
+            if _sync["error"]:
+                st.caption(f"❌ {_sync['error'][:80]}")
+
+            st.caption(f"📊 حجم SQLite: {_size:.1f} MB")
+            st.caption(f"📈 صفوف مُزامَنة: {_sync['rows_synced']:,}")
+
+            _c1, _c2 = st.columns(2)
+            with _c1:
+                if st.button("🔄 مزامنة", use_container_width=True):
+                    with st.spinner("جاري المزامنة..."):
+                        full_sync(verbose=False)
+                    st.cache_data.clear()
+                    st.rerun()
+            with _c2:
+                if st.button("🧹 كاش", use_container_width=True):
+                    st.cache_data.clear()
+                    st.toast("✅ تم مسح الكاش")
+                    st.rerun()
+except Exception as _e:
+    pass   # تجاهل الأخطاء في sidebar
 PAGES_DIR = Path(__file__).parent / "pages"
 
 HIDE_DEFAULT_NAV = """

@@ -30,6 +30,7 @@ from period_guard import check_period_open
 from auth_required import require_login, get_current_user_id, get_current_user_name
 from code_search import CodeSearch, FormState
 from form_manager import clear_form, show_clear_hint
+from input_helpers import price_input, qty_input
 
 current_user = require_login()
 current_user_id = get_current_user_id()
@@ -785,9 +786,9 @@ else:
     current_item = cs.by_label(sel_label)
 
 with col2:
-    qty = st.number_input("الكمية:", min_value=1, step=1, key=fs.key("qty"))
+    qty = qty_input('الكمية:', key='inv_qty_1')
 with col3:
-    price = st.number_input("السعر:", min_value=0.0, step=0.1, key=cs.price_key)
+    price = price_input('السعر:', key='inv_price_1')
 
 if st.button("➕ إضافة للفاتورة"):
     if sel_label == PLACEHOLDER:

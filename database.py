@@ -84,3 +84,56 @@ def get_db():
 def get_session():
     """جلسة مباشرة (للاستخدام السريع)."""
     return SessionLocal()
+
+# ═══════════════════════════════════════════════════════
+#  Helpers (auto-added) — تعمل مع Neon أو SQLite بأمان
+# ═══════════════════════════════════════════════════════
+import os as _os
+
+def is_local_mode():
+    """هل نحن في وضع محلي (SQLite Mirror)؟"""
+    return _os.getenv("DEPLOY_MODE", "cloud").lower() == "local"
+
+
+def _try_local():
+    """محاولة تحميل SQLite Mirror بأمان — ترجع None عند الفشل."""
+    try:
+        from local_mirror import LocalSession, init_local_schema
+        init_local_schema()
+        return LocalSession
+    except Exception:
+        return None
+
+
+_READ_SESSION_FACTORY = None
+_READ_INIT_DONE = False
+
+
+def get_read_session():
+    """
+    جلسة قراءة:
+    - محلياً مع SQLite Mirror متاح → SQLite (سريع)
+    - غير ذلك → Neon مباشرة
+    """
+    global _READ_SESSION_FACTORY, _READ_INIT_DONE
+    if not _READ_INIT_DONE:
+        _READ_INIT_DONE = True
+        if is_local_mode():
+            _READ_SESSION_FACTORY = _try_local()
+    if _READ_SESSION_FACTORY is not None:
+        return _READ_SESSION_FACTORY()
+    return SessionLocal()
+
+
+def get_write_session():
+    """جلسة كتابة — Neon دائماً."""
+    return SessionLocal()
+
+
+def get_local_db_path():
+    """مسار SQLite المحلي (إن وُجد)."""
+    try:
+        from local_mirror import LOCAL_DB_PATH
+        return LOCAL_DB_PATH
+    except Exception:
+        return None

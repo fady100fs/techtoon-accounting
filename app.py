@@ -6,7 +6,8 @@
 import time
 _t0 = time.time()
 import streamlit as st
-
+import time
+_t0 = time.time()
 st.set_page_config(
     page_title="Techtoon Accounting",
     page_icon="💼",
@@ -338,3 +339,16 @@ if not current:
     render_login()
 else:
     render_home(current)
+
+# ⭐ إخفاء شريط Streamlit العلوي (لنافذة سطح المكتب)
+st.markdown("""
+<style>
+    #MainMenu {visibility: hidden;}
+    header[data-testid="stHeader"] {display: none;}
+    .stDeployButton {display: none;}
+    [data-testid="stToolbar"] {display: none;}
+    [data-testid="stDecoration"] {display: none;}
+    footer {visibility: hidden;}
+    .block-container {padding-top: 1rem !important;}
+</style>
+""", unsafe_allow_html=True)
