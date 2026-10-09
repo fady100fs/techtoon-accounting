@@ -415,3 +415,68 @@ def restore_from_zip(zip_bytes, tables=None, dry_run=False):
     except Exception as e:
         report["errors"].append(f"فشل فك الـ ZIP: {str(e)[:200]}")
         return report
+
+# ═══════════════════════════════════════════════════
+#  تصدير كل الجداول إلى ZIP حقيقي (نسخة احتياطية)
+# ═══════════════════════════════════════════════════
+def export_all_tables_to_zip() -> bytes:
+    """تصدير كل جداول قاعدة البيانات كـ CSV داخل ZIP."""
+    from database import SessionLocal
+    import models
+
+    buf = io.BytesIO()
+    db = SessionLocal()  # Neon - المصدر الرسمي
+
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            model_names = [
+                "User", "Account", "Currency", "AccountingPeriod",
+                "Party", "CashBox", "Category", "Item", "KitComponent",
+                "Invoice", "InvoiceLine", "CostHistory",
+                "JournalEntry", "JournalLine",
+                "Payment", "CashTransfer", "ExpenseCategory", "Expense",
+                "Warehouse", "StockLevel", "WarehouseTransfer", "StockCount",
+                "FixedAsset", "DepreciationRecord",
+                "Loan", "LoanInstallment",
+                "Employee", "SalaryRecord",
+                "Budget", "CostCenter", "CostAllocation", "CostCenterTransaction",
+                "AppSetting",
+            ]
+
+            exported = 0
+            total_rows = 0
+            errors = []
+
+            for name in model_names:
+                model = getattr(models, name, None)
+                if model is None:
+                    continue
+                try:
+                    items = db.query(model).all()
+                    if not items:
+                        continue
+                    cols = [c.name for c in model.__table__.columns]
+                    data = [{c: getattr(item, c, None) for c in cols} for item in items]
+                    df = pd.DataFrame(data)
+                    csv_text = df.to_csv(index=False)
+                    zf.writestr(f"{model.__tablename__}.csv", csv_text)
+                    exported += 1
+                    total_rows += len(data)
+                except Exception as e:
+                    errors.append(f"{name}: {e}")
+
+            info = (
+                f"Techtoon Accounting Backup\n"
+                f"Created: {datetime.now().isoformat()}\n"
+                f"Tables: {exported}\n"
+                f"Rows: {total_rows}\n"
+                f"Errors: {len(errors)}\n"
+            )
+            if errors:
+                info += "\nErrors:\n" + "\n".join(errors)
+            zf.writestr("_backup_info.txt", info)
+
+        buf.seek(0)
+        return buf.getvalue()
+    finally:
+        db.close()

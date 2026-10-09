@@ -59,19 +59,20 @@ def list_backups():
 
 
 def upload_backup():
-    """إنشاء ZIP ورفعه."""
+    """تصدير كل الجداول من Neon ورفعها كـ ZIP."""
+    from s3_backup import export_all_tables_to_zip
+
     s3 = get_s3_client()
     bucket = st.secrets.get("S3_BUCKET")
 
-    # إنشاء ZIP في الذاكرة
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("README.txt", f"Backup {datetime.now().isoformat()}")
-    buf.seek(0)
+    # تصدير كل الجداول
+    data = export_all_tables_to_zip()
+    size_kb = len(data) / 1024
 
     key = f"backups/backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-    s3.upload_fileobj(buf, bucket, key)
-    return key
+    s3.put_object(Bucket=bucket, Key=key, Body=data)
+
+    return key, size_kb
 
 
 # ============ الواجهة ============
@@ -88,9 +89,9 @@ if st.button("🔄 اختبار الاتصال"):
 
 if st.button("📤 رفع نسخة جديدة", type="primary"):
     try:
-        with st.spinner("جارٍ الرفع..."):
-            key = upload_backup()
-        st.success(f"✅ تم الرفع: {key}")
+        with st.spinner("جارٍ التصدير والرفع..."):
+            key, size_kb = upload_backup()
+        st.success(f"✅ تم الرفع: {key} ({size_kb:.1f} KB)")
     except Exception as e:
         st.error(f"⚠️ خطأ: {e}")
 
