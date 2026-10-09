@@ -352,3 +352,35 @@ st.markdown("""
     .block-container {padding-top: 1rem !important;}
 </style>
 """, unsafe_allow_html=True)
+
+
+# ⭐⭐⭐ إخفاء كامل لعناصر Streamlit (نسخة 1.64+)
+st.markdown("""
+<style>
+    /* ═══ شريط علوي ═══ */
+    header[data-testid="stHeader"] { display: none !important; }
+    [data-testid="stToolbar"] { display: none !important; }
+    [data-testid="stStatusWidget"] { display: none !important; }
+    [data-testid="stDecoration"] { display: none !important; }
+    [data-testid="stDeployButton"] { display: none !important; }
+    .stDeployButton { display: none !important; }
+    #MainMenu { visibility: hidden !important; display: none !important; }
+
+    /* ═══ القائمة الافتراضية (multipage nav) ═══ */
+    [data-testid="stSidebarNav"] { display: none !important; }
+    [data-testid="stSidebarNavItems"] { display: none !important; }
+    [data-testid="stSidebarNavSeparator"] { display: none !important; }
+    section[data-testid="stSidebar"] > div:first-child > div:first-child > div:first-child { display: none !important; }
+
+    /* ═══ Footer + Badge ═══ */
+    footer { display: none !important; visibility: hidden !important; }
+    [data-testid="stBottom"] { display: none !important; }
+    .viewerBadge_container__1QSob { display: none !important; }
+    [class*="viewerBadge"] { display: none !important; }
+    a[href*="streamlit.io"] { display: none !important; }
+
+    /* ═══ تحسين المساحة ═══ */
+    .block-container { padding-top: 1rem !important; }
+    section.main > div { padding-top: 0.5rem !important; }
+</style>
+""", unsafe_allow_html=True)

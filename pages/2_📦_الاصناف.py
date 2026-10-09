@@ -35,6 +35,16 @@ from cache_helpers import (
 )
 
 current_user = require_login()
+
+# ⭐ استقبال التنقل من شجرة الحسابات
+from navigation_helper import consume_navigation_flags, show_navigation_banner
+_nav = consume_navigation_flags()
+show_navigation_banner(_nav, page_name="الأصناف")
+_open_item_id = _nav.get("_open_items_id")
+if _open_item_id:
+    st.session_state["_highlight_item_id"] = _open_item_id
+    st.info(f"🎯 تم استدعاؤك لعرض الصنف رقم `{_open_item_id}`")
+
 current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
 
