@@ -1,0 +1,4 @@
+@echo off
+cd /d "%~dp0"
+pyinstaller --noconfirm --clean --windowed --name TechtoonAccounting --icon logo.ico --add-data "pages;pages" --add-data ".streamlit;.streamlit" --add-data "input_helpers.py;." --add-data "cache_helpers.py;." --add-data "database.py;." --add-data "models.py;." --add-data "services.py;." --add-data "sidebar.py;." --add-data "navigation_helper.py;." --add-data "local_mirror.py;." --add-data "sync_manager.py;." --add-data "s3_backup.py;." --add-data "invoice_page_common.py;." --add-data "license_manager.py;." --add-data "license_ui.py;." --hidden-import psycopg2 --hidden-import streamlit --hidden-import boto3 --hidden-import webview --collect-all streamlit launcher.py > _build_log.txt 2>&1
+echo BUILD_DONE=%ERRORLEVEL% >> _build_log.txt

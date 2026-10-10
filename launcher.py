@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent
 TITLE = "Techtoon Accounting"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
-# ═══ Single Instance Lock ═══
+# â•â•â• Single Instance Lock â•â•â•
 _mutex_handle = None
 
 
@@ -42,11 +42,11 @@ def _focus_existing():
 
 
 def _set_taskbar_icon():
-    """Windows: اجعل أيقونة التطبيق logo.ico في شريط المهام."""
+    """Windows: Ø§Ø¬Ø¹Ù„ Ø£ÙŠÙ‚ÙˆÙ†Ø© Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ logo.ico ÙÙŠ Ø´Ø±ÙŠØ· Ø§Ù„Ù…Ù‡Ø§Ù…."""
     if os.name != "nt":
         return
     try:
-        # AppUserModelID لتجميع النوافذ تحت أيقونة واحدة
+        # AppUserModelID Ù„ØªØ¬Ù…ÙŠØ¹ Ø§Ù„Ù†ÙˆØ§ÙØ° ØªØ­Øª Ø£ÙŠÙ‚ÙˆÙ†Ø© ÙˆØ§Ø­Ø¯Ø©
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
             "Techtoon.Accounting.Desktop.1"
         )
@@ -54,7 +54,7 @@ def _set_taskbar_icon():
         pass
 
 
-# ═══ Port + Streamlit ═══
+# â•â•â• Port + Streamlit â•â•â•
 def _find_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
@@ -70,7 +70,7 @@ def _port_open(port):
 PORT = 8501
 URL = f"http://localhost:{PORT}"
 
-# ═══ شاشة تحميل أنيقة ═══
+# â•â•â• Ø´Ø§Ø´Ø© ØªØ­Ù…ÙŠÙ„ Ø£Ù†ÙŠÙ‚Ø© â•â•â•
 LOADING_HTML = '''
 <!DOCTYPE html>
 <html dir="rtl">
@@ -246,6 +246,29 @@ def boot(window):
     else:
         window.load_html(ERROR_HTML)
 
+
+
+
+# ═══════════════════════════════════════════════════
+#  فحص الترخيص قبل فتح التطبيق
+# ═══════════════════════════════════════════════════
+def _check_license():
+    """يتحقق من الترخيص. يرجع True إذا كان صالحاً."""
+    try:
+        from license_manager import get_license_status
+        from license_ui import show_license_window
+
+        status = get_license_status()
+
+        if status.get("valid"):
+            return True
+
+        # الترخيص غير صالح — اعرض شاشة التنشيط
+        show_license_window(status)
+        return False
+    except Exception as e:
+        # في حالة الخطأ، اسمح بالدخول (تجنباً لمنع المستخدم من التطبيق)
+        return True
 
 def main():
     if not _ensure_single_instance():
