@@ -14,7 +14,7 @@ class TTL:
 def _get_ttl():
     mode = os.getenv("DEPLOY_MODE", "cloud").lower()
     if mode == "local":
-        return int(os.getenv("LOCAL_CACHE_TTL", "1800"))
+        return int(os.getenv("LOCAL_CACHE_TTL", "120"))
     return int(os.getenv("CLOUD_CACHE_TTL", "120"))
 
 
@@ -24,6 +24,19 @@ CACHE_TTL = _get_ttl()
 def _get_read_session():
     from database import get_read_session
     return get_read_session()
+
+
+def _get_fresh_session():
+    """⭐ جلسة قراءة من قاعدة البيانات المصدر مباشرة (نفس مصدر الكتابة).
+
+    تُستخدم لأرقام المخزون الحرجة (تلميح الفواتير، قائمة الأصناف، لوحة
+    التحكم) حتى تظهر الكميات فوراً بعد حفظ فواتير البيع/الشراء دون
+    انتظار المزامنة — كان الاعتماد على المرآة يعرض رصيداً صفراً أو قديماً.
+    """
+    from database import SessionLocal
+    return SessionLocal()
+
+
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
@@ -113,15 +126,42 @@ def get_payments_index(limit: int = 500):
     db = _get_read_session()
     try:
         rows = db.query(models.Payment).order_by(models.Payment.id.desc()).limit(limit).all()
-        return [{
-            "id": r.id,
-            "number": getattr(r, "reference_number", None),
-            "date": getattr(r, "date", None),
-            "party_id": getattr(r, "party_id", None),
-            "amount": float(getattr(r, "amount", 0) or 0),
-            "method": getattr(r, "payment_method", None),
-            "type": getattr(r, "payment_type", None),
-        } for r in rows]
+        out = []
+        for r in rows:
+            # العلاقات قد تكون None لو حُذف الأصل — نتعامل بأمان
+            party = getattr(r, "party", None)
+            currency = getattr(r, "currency", None)
+            cash_box = getattr(r, "cash_box", None)
+            party_name = getattr(party, "name", None) or "-"
+            currency_symbol = getattr(currency, "symbol", None) or "ج.م"
+            cash_box_name = getattr(cash_box, "name", None) or "-"
+            payment_type = getattr(r, "payment_type", None)
+            payment_method = getattr(r, "payment_method", None)
+            reference_number = getattr(r, "reference_number", None)
+            out.append({
+                # المفاتيح الأصلية (محفوظة للتوافقية)
+                "id": r.id,
+                "number": reference_number,
+                "date": getattr(r, "date", None),
+                "party_id": getattr(r, "party_id", None),
+                "amount": float(getattr(r, "amount", 0) or 0),
+                "method": payment_method,
+                "type": payment_type,
+                # ⭐ المفاتيح الإضافية التي تتوقعها صفحة المدفوعات
+                #    (كانت ناقصة فتسبّب KeyError على payment_type و party_name
+                #     و payment_method و reference_number و currency_symbol
+                #     و cash_box_name)
+                "payment_type": payment_type,
+                "payment_method": payment_method,
+                "reference_number": reference_number,
+                "party_name": party_name,
+                "currency_symbol": currency_symbol,
+                "cash_box_name": cash_box_name,
+                "notes": getattr(r, "notes", None),
+                "currency_id": getattr(r, "currency_id", None),
+                "cash_box_id": getattr(r, "cash_box_id", None),
+            })
+        return out
     finally:
         db.close()
 
@@ -130,9 +170,12 @@ def get_payments_index(limit: int = 500):
 def get_dashboard_kpis():
     import models
     from sqlalchemy import func
+    from datetime import datetime
     db = _get_read_session()
     try:
         kpis = {}
+
+        # المفاتيح القديمة (توافقية مع أي استخدام سابق)
         kpis["invoices_count"] = db.query(func.count(models.Invoice.id)).scalar() or 0
         kpis["parties_count"] = db.query(func.count(models.Party.id)).scalar() or 0
         kpis["items_count"] = db.query(func.count(models.Item.id)).scalar() or 0
@@ -140,7 +183,87 @@ def get_dashboard_kpis():
         kpis["invoices_total"] = float(total or 0)
         total_pay = db.query(func.coalesce(func.sum(models.Payment.amount), 0)).scalar()
         kpis["payments_total"] = float(total_pay or 0)
+
+        # ⭐ المفاتيح التي تتوقعها لوحة التحكم (كانت ناقصة وتسبب KeyError)
+        total_sales = db.query(func.coalesce(func.sum(models.Invoice.net_amount), 0)).filter(
+            models.Invoice.type == "sale",
+            models.Invoice.status != "cancelled",
+        ).scalar()
+        kpis["total_sales"] = float(total_sales or 0)
+
+        month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        monthly_sales = db.query(func.coalesce(func.sum(models.Invoice.net_amount), 0)).filter(
+            models.Invoice.type == "sale",
+            models.Invoice.status != "cancelled",
+            models.Invoice.date >= month_start,
+        ).scalar()
+        kpis["monthly_sales"] = float(monthly_sales or 0)
+
+        total_expenses = db.query(func.coalesce(func.sum(models.Expense.amount), 0)).scalar()
+        kpis["total_expenses"] = float(total_expenses or 0)
+
+        kpis["total_invoices"] = int(kpis["invoices_count"])
+        kpis["total_customers"] = db.query(func.count(models.Party.id)).filter(
+            models.Party.type == "customer"
+        ).scalar() or 0
+
         return kpis
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_inventory_summary():
+    """⭐ ملخص حالة المخزون — كانت الدالة مفقودة وتسبب ImportError في لوحة التحكم."""
+    import models
+    from sqlalchemy import func, case
+    db = _get_fresh_session()
+    try:
+        stock_map = {}
+        try:
+            rows = db.query(
+                models.InventoryMovement.item_id,
+                func.sum(case(
+                    (models.InventoryMovement.type == "in", models.InventoryMovement.quantity),
+                    else_=-models.InventoryMovement.quantity
+                )).label("balance")
+            ).group_by(models.InventoryMovement.item_id).all()
+            stock_map = {iid: float(b or 0) for iid, b in rows}
+        except Exception:
+            try:
+                rows2 = db.query(
+                    models.StockLevel.item_id,
+                    func.coalesce(func.sum(models.StockLevel.quantity), 0)
+                ).group_by(models.StockLevel.item_id).all()
+                stock_map = {iid: float(q or 0) for iid, q in rows2}
+            except Exception:
+                stock_map = {}
+
+        total_items = 0
+        good_stock_count = 0
+        low_stock_count = 0
+        total_value = 0.0
+
+        items = db.query(models.Item).all()
+        for it in items:
+            if getattr(it, "is_kit", False):
+                continue  # الأصناف المدمجة لا تُحسب من حركات المخزون
+            total_items += 1
+            qty = stock_map.get(it.id, 0.0)
+            min_stock = float(getattr(it, "min_stock", 0) or 0)
+            if qty <= min_stock:
+                low_stock_count += 1
+            else:
+                good_stock_count += 1
+            cost = float(getattr(it, "cost_price", 0) or 0)
+            total_value += max(qty, 0.0) * cost
+
+        return {
+            "total_items": total_items,
+            "good_stock_count": good_stock_count,
+            "low_stock_count": low_stock_count,
+            "total_value": round(total_value, 2),
+        }
     finally:
         db.close()
 
@@ -149,7 +272,7 @@ def get_dashboard_kpis():
 def get_items_with_stock(limit: int = 5000):
     import models
     from sqlalchemy import func, case
-    db = _get_read_session()
+    db = _get_fresh_session()
     try:
         items = db.query(models.Item).limit(limit).all()
         if not items:
@@ -219,7 +342,7 @@ def get_active_categories():
 def get_stock_map():
     import models
     from sqlalchemy import func, case
-    db = _get_read_session()
+    db = _get_fresh_session()
     try:
         rows = db.query(
             models.InventoryMovement.item_id,
@@ -249,7 +372,11 @@ def invalidate_and_sync():
     invalidate_cache()
     try:
         from database import is_local_mode
-        if is_local_mode():
+        try:
+            from database import DATABASE_URL_IS_LOCAL as _db_local
+        except Exception:
+            _db_local = False
+        if is_local_mode() and not _db_local:  # ⭐ تخطَّ مزامنة المرآة إذا كانت القاعدة نفسها محلية
             import threading
             from sync_manager import full_sync
             threading.Thread(target=full_sync, daemon=True).start()
