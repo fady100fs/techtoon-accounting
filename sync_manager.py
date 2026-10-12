@@ -17,6 +17,25 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+
+# ⭐ تسجيل نتائج/أخطاء المزامنة في ملف مرئي بدل ابتلاعها صامتاً
+def _ensure_file_logging():
+    try:
+        if getattr(logger, "_tt_file_handler", False):
+            return
+        _dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+        os.makedirs(_dir, exist_ok=True)
+        _fh = logging.FileHandler(os.path.join(_dir, "sync.log"), encoding="utf-8")
+        _fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+        logger.addHandler(_fh)
+        if logger.level == logging.NOTSET:
+            logger.setLevel(logging.INFO)
+        logger._tt_file_handler = True
+    except Exception:
+        pass
+
+_ensure_file_logging()
+
 # ═══════════════════════════════════════════════════
 #  إعدادات المزامنة
 # ═══════════════════════════════════════════════════
@@ -58,8 +77,9 @@ def _get_sync_tables_in_order():
     # 2️⃣ الجداول التابعة (FK على المستقل)
     dependent = [
         "Party", "Item", "Employee",
-        "KitComponent",
-        "Invoice", "InvoiceLine", "CostHistory",
+        "KitComponent", "InventoryMovement",
+        "Invoice", "InvoiceLine",
+        "RecurringInvoiceTemplate", "RecurringInvoiceLine", "CostHistory",
         "JournalEntry", "JournalLine",
         "Payment", "CashTransfer",
         "Expense",
@@ -169,6 +189,13 @@ def full_sync(verbose: bool = False) -> bool:
 
         start = time.time()
         res = _pull_all_from_neon(verbose=verbose)
+        # ⭐ بعد نجاح المزامنة نمسح الكاش حتى ترى الصفحات البيانات
+        #    المُزامنة فوراً (كانت تبقى قديمة حتى انتهاء مدة الكاش)
+        try:
+            import streamlit as _st_clear
+            _st_clear.cache_data.clear()
+        except Exception:
+            pass
         duration = time.time() - start
 
         with _state_lock:
@@ -186,6 +213,71 @@ def full_sync(verbose: bool = False) -> bool:
         )
         return res["ok"]
 
+    finally:
+        _sync_lock.release()
+
+
+def quick_sync(tables=None) -> bool:
+    """⭐ مزامنة سريعة لجداول محددة فقط — أسرع بكثير من full_sync.
+
+    افتراضياً تُزامن فقط الجداول الحرجة التي تتغير بالكتابات الشائعة
+    (فواتير، حركات مخزون، قيود، مدفوعات، تحويلات، أصناف، أطراف،
+     مصروفات، أرصدة مخزون). الجداول المستقرة (العملات، الحسابات،
+    المستخدمون، التصنيفات، المخازن...) تُزامن دورياً بواسطة
+    full_sync كل 30 دقيقة — لا حاجة لمزامنتها بعد كل حفظ.
+    """
+    if not _sync_lock.acquire(blocking=False):
+        logger.info("⏳ مزامنة جارية بالفعل — تم التجاهل")
+        return False
+
+    try:
+        from database import SessionLocal
+        from local_mirror import get_local_session
+        from sqlalchemy import inspect as sa_inspect, text as _text
+
+        # الجداول الافتراضية للمزامنة السريعة (الحرجة فقط)
+        if tables is None:
+            import models
+            tables = [
+                models.Invoice, models.InvoiceLine, models.InventoryMovement,
+                models.CostHistory, models.JournalEntry, models.JournalLine,
+                models.Payment, models.CashTransfer,
+                models.Item, models.KitComponent,
+                models.Party, models.Expense,
+                models.StockLevel, models.WarehouseTransfer, models.StockCount,
+            ]
+
+        remote = SessionLocal()
+        local = get_local_session()
+        synced = 0
+        try:
+            local.execute(_text("PRAGMA foreign_keys=OFF"))
+
+            for model in tables:
+                try:
+                    # احذف المحلي
+                    local.query(model).delete(synchronize_session=False)
+                    # انسخ من Neon
+                    rows = remote.query(model).all()
+                    if rows:
+                        mapper = sa_inspect(model)
+                        col_names = [c.key for c in mapper.columns]
+                        records = [{c: getattr(r, c, None) for c in col_names} for r in rows]
+                        local.bulk_insert_mappings(model, records)
+                    synced += 1
+                except Exception as e:
+                    logger.debug(f"⚠️ تخطّي {model.__name__}: {e}")
+
+            local.commit()
+            local.execute(_text("PRAGMA foreign_keys=ON"))
+            logger.info(f"⚡ quick_sync: {synced}/{len(tables)} جدول")
+            return True
+        finally:
+            remote.close()
+            local.close()
+    except Exception as e:
+        logger.error(f"❌ فشل quick_sync: {e}")
+        return False
     finally:
         _sync_lock.release()
 

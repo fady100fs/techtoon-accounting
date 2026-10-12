@@ -101,8 +101,8 @@ def _after_write():
         def _do_sync():
             time.sleep(2)  # نافذة تجميع لعدة كتابات سريعة
             try:
-                from sync_manager import full_sync
-                full_sync(verbose=False)
+                from sync_manager import quick_sync
+                quick_sync()
             except Exception:
                 pass
             finally:
