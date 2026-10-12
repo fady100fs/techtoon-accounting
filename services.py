@@ -88,6 +88,12 @@ def _after_write():
     try:
         if not is_local_mode():
             return
+        try:
+            from database import DATABASE_URL_IS_LOCAL as _db_is_local
+        except Exception:
+            _db_is_local = False
+        if _db_is_local:
+            return  # ⭐ القاعدة نفسها محلية — لا حاجة لمرآة أو مزامنة
         if _sync_pending.is_set():
             return  # مزامنة قيد الانتظار بالفعل
         _sync_pending.set()
@@ -347,10 +353,152 @@ def _calc_item_cost_for_invoice(db, item):
 
 
 # ═══════════════════════════════════════════════════════
+#  ⭐ ضمان وجود حساب ضريبة القيمة المضافة (2102)
+# ═══════════════════════════════════════════════════════
+def _ensure_tax_account(db):
+    """يُرجع حساب ضريبة القيمة المضافة (كود 2102) وينشئه تلقائياً إن لم يوجد.
+
+    يُستخدم في ترحيل الفواتير:
+      - بيع:  دائن (ضريبة مخرجات مستحقة)
+      - شراء: مدين (ضريبة مدخلات قابلة للخصم)
+    """
+    try:
+        acc = db.query(models.Account).filter(models.Account.code == "2102").first()
+        if acc:
+            return acc
+        parent = db.query(models.Account).filter(models.Account.code == "2000").first()
+        acc = models.Account(
+            code="2102",
+            name="ضريبة القيمة المضافة",
+            type=AccountType.LIABILITY,
+            parent_id=parent.id if parent else None,
+        )
+        db.add(acc)
+        db.flush()
+        return acc
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
+
+
+# ═══════════════════════════════════════════════════════
 #  2b. إنشاء فاتورة
 # ═══════════════════════════════════════════════════════
+def _ensure_unique_invoice_number(db, desired=None):
+    """
+    ⭐ يرجع رقم فاتورة غير مستخدم (فريد عالمياً عبر بيع + شراء معاً).
+
+    - لو desired فارغ: يولّد (أكبر رقم موجود + 1) عالمياً وليس count()+1،
+      لأن count() ينقص عند حذف فواتير فيقترح أرقاماً موجودة مسبقاً.
+    - لو desired موجود ومستخدماً: يرفع الرقم تلقائياً لأول رقم حر
+      بدلاً من الفشل بخطأ UniqueViolation.
+    """
+    import re as _re
+
+    def _bump(base, offset):
+        m = _re.search(r"(\d+)$", base)
+        if m:
+            width = len(m.group(1))
+            return base[:m.start()] + str(int(m.group(1)) + offset).zfill(width)
+        return f"{base}-{offset}"
+
+    candidate = str(desired).strip() if desired else None
+
+    if not candidate:
+        max_n = 0
+        for (num,) in db.query(models.Invoice.invoice_number).all():
+            m = _re.search(r"(\d+)$", str(num or ""))
+            if m:
+                try:
+                    max_n = max(max_n, int(m.group(1)))
+                except ValueError:
+                    pass
+        candidate = f"INV-{max_n + 1:06d}"
+
+    # ⭐ الفحص عالمي (كل الأنواع) لمطابقة قيد UNIQUE في قاعدة البيانات
+    def _taken(num):
+        return db.query(models.Invoice.id).filter(
+            models.Invoice.invoice_number == num
+        ).first() is not None
+
+    if not _taken(candidate):
+        return candidate
+
+    base = candidate
+    offset = 1
+    while True:
+        candidate = _bump(base, offset)
+        if not _taken(candidate):
+            return candidate
+        offset += 1
+        if offset > 100000:
+            raise ValueError("تعذر توليد رقم فاتورة فريد — راجع ترقيم الفواتير")
+
+def _dedupe_invoice_journals(db, invoice_id):
+    """
+    ⭐ حماية من تكرار قيود الفواتير:
+    النسخ القديمة كانت تنشئ قيد الفاتورة داخل حلقة الأسطر (قيد كامل لكل
+    سطر) مما يضخم التقارير المحاسبية بعدد أسطر كل فاتورة. هذه الدالة
+    تحتفظ بأول قيد لكل فاتورة وتحذف القيود المطابقة تاماً فقط.
+    """
+    try:
+        entries = db.query(models.JournalEntry).filter(
+            models.JournalEntry.reference_type == "invoice",
+            models.JournalEntry.reference_id == invoice_id
+        ).order_by(models.JournalEntry.id).all()
+        if len(entries) <= 1:
+            return 0
+
+        def _sig(e):
+            rows = db.query(models.JournalLine).filter(
+                models.JournalLine.entry_id == e.id
+            ).order_by(models.JournalLine.account_id,
+                       models.JournalLine.debit,
+                       models.JournalLine.credit).all()
+            return (
+                (e.description or ""), str(e.date),
+                tuple((r.account_id, round(float(r.debit or 0), 2),
+                       round(float(r.credit or 0), 2)) for r in rows),
+            )
+
+        keep_sig = _sig(entries[0])
+        removed = 0
+        for extra in entries[1:]:
+            if _sig(extra) == keep_sig:
+                db.query(models.JournalLine).filter(
+                    models.JournalLine.entry_id == extra.id
+                ).delete(synchronize_session=False)
+                db.delete(extra)
+                removed += 1
+        if removed:
+            db.flush()
+        return removed
+    except Exception:
+        return 0
+
 def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_id=1,
                    invoice_date=None, discount_percentage=0.0, tax_rate=14.0, created_by=None):
+    """إنشاء فاتورة — الترحيل المحاسبي المُعاد هيكلته (⭐ v2).
+
+    قبل: كان يُنشأ قيد لكل سطر بمبالغ مستوى الفاتورة (ترحيل مضاعف بعدد الأسطر)
+         ولا يوجد سطر ضريبة (قيود غير متوازنة عند الضريبة > 0).
+
+    الآن — لكل فاتورة قيد واحد متوازن فقط:
+      بيع:   مدين/حساب العميل = الصافي
+             دائن/4101 الإيرادات = المبلغ بعد الخصم
+             دائن/2102 الضريبة  = مبلغ الضريبة (إن وجد)
+      شراء:  مدين/1301 المخزون = المبلغ بعد الخصم
+             مدين/2102 الضريبة  = مبلغ الضريبة (إن وجد)
+             دائن/حساب المورد = الصافي
+      وقيد COGS واحد للبيع (5101 مدين / 1301 دائن) بإجمالي تكلفة الأسطر.
+
+    لا تغيير على: الأسطر، حركات المخزون، سجل التكاليف، ترقيم الفواتير.
+    ⭐ الفواتير المحفوظة سابقاً وقيودها لا تتأثر إطلاقاً — المنطق الجديد
+       يُطبَّق على الفواتير الجديدة فقط.
+    """
     db = _write()
     try:
         check_period_open(invoice_date or datetime.now(), entity="إنشاء فاتورة")
@@ -360,8 +508,8 @@ def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_
         if not party:
             raise ValueError(f"العميل/المورد برقم {party_id} غير موجود!")
 
-        if not invoice_number:
-            invoice_number = f"INV-{db.query(models.Invoice).count() + 1:06d}"
+        # ⭐ ترقيم آمن فريد عالمياً (بيع+شراء) — يرفع الرقم تلقائياً عند التعارض
+        invoice_number = _ensure_unique_invoice_number(db, invoice_number)
         if invoice_date is None:
             invoice_date = datetime.now()
 
@@ -381,20 +529,42 @@ def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_
         db.add(invoice)
         db.flush()
 
+        line_costs_total = 0.0   # ⭐ إجمالي تكلفة الأسطر لقيد COGS الموحّد
+
         for item_data in items:
             item = db.query(models.Item).filter(models.Item.name == item_data['item_name']).first()
             if not item:
                 raise ValueError(f"الصنف '{item_data['item_name']}' غير موجود!")
 
             line_total = item_data['quantity'] * item_data['price']
+            line_cost = _calc_item_cost_for_invoice(db, item)
             invoice_line = models.InvoiceLine(
                 invoice_id=invoice.id, item_id=item.id,
                 quantity=item_data['quantity'], price=item_data['price'],
-                total=line_total, cost_price=_calc_item_cost_for_invoice(db, item)
+                total=line_total, cost_price=line_cost
             )
             db.add(invoice_line)
 
-            if not item.is_kit:
+            # ⭐ إصلاح أصناف الدمج (kit): عند بيع/شراء صنف مدمج، يجب خصم/إضافة
+            #    كميات مكوّناته من مخزون كل صنف مكوّن (وليس من مخزون الصنف المدمج نفسه
+            #    الذي لا يحتفظ بمخزون مستقل). الحل: إنشاء InventoryMovement لكل مكوّن
+            #    بمقدار (component.quantity × كمية الصنف المدمج في الفاتورة).
+            #    الصنف العادي يحافظ على سلوكه القديم بدون أي تعديل.
+            if item.is_kit:
+                kit_qty = float(item_data['quantity'] or 0)
+                kit_components = db.query(models.KitComponent).filter(
+                    models.KitComponent.kit_item_id == item.id
+                ).all()
+                movement_type = 'in' if invoice_type == 'purchase' else 'out'
+                for comp in kit_components:
+                    comp_qty = float(comp.quantity or 0) * kit_qty
+                    if comp_qty <= 0:
+                        continue
+                    db.add(models.InventoryMovement(
+                        item_id=comp.component_item_id, date=invoice_date,
+                        type=movement_type, quantity=comp_qty, reference_id=invoice.id
+                    ))
+            else:
                 movement_type = 'in' if invoice_type == 'purchase' else 'out'
                 movement = models.InventoryMovement(
                     item_id=item.id, date=invoice_date, type=movement_type,
@@ -411,55 +581,98 @@ def create_invoice(party_id, invoice_type, items, invoice_number=None, currency_
                         total_cost=total_cost, purchase_date=invoice_date, supplier_id=party.id
                     )
                     db.add(cost_record)
+                    # ⭐ الإصلاح: flush حتى يرى تحديث الأسطر سجل التكلفة الجديد
+                    #    (الجلسة autoflush=False وكان السجل المعلق غير مرئي للاستعلام)
+                    db.flush()
                     # ⭐ نمرر نفس db لتفادي جلسة متداخلة منفصلة
                     update_item_prices(item.id, db=db)
 
-            journal_entry = models.JournalEntry(
-                date=invoice_date, description=f"فاتورة {invoice_type} رقم {invoice_number}",
-                reference_type="invoice", reference_id=invoice.id, created_by=created_by,
+            if invoice_type == 'sale':
+                line_costs_total += float(item_data['quantity'] or 0) * float(line_cost or 0)
+
+        # ═════════════════════════════════════════════════
+        #  ⭐ الترحيل المحاسبي — قيد واحد متوازن للفاتورة كاملة
+        # ═════════════════════════════════════════════════
+        journal_entry = models.JournalEntry(
+            date=invoice_date, description=f"فاتورة {invoice_type} رقم {invoice_number}",
+            reference_type="invoice", reference_id=invoice.id, created_by=created_by,
+            period_id=period.id if period else None
+        )
+        db.add(journal_entry)
+        db.flush()
+
+        # تقريب القيم لضمان التوازن التام بين الطرفين
+        net_r = round(float(net_amount or 0), 2)
+        aad_r = round(float(amount_after_discount or 0), 2)
+        tax_r = round(float(tax_amount or 0), 2)
+
+        tax_account = _ensure_tax_account(db) if tax_r > 0 else None
+
+        if invoice_type == 'sale':
+            # بيع: دائن الإيرادات + دائن الضريبة | مدين العميل بالصافي
+            credit_rev = aad_r
+            credit_tax = tax_r if (tax_r > 0 and tax_account is not None) else 0.0
+            debit_party = round(credit_rev + credit_tax, 2)
+
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id,
+                                       debit=debit_party, credit=0.0))
+            revenue_account = db.query(models.Account).filter(models.Account.code == "4101").first()
+            if revenue_account:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=revenue_account.id,
+                                           debit=0.0, credit=credit_rev))
+            if credit_tax > 0 and tax_account is not None:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=tax_account.id,
+                                           debit=0.0, credit=credit_tax))
+        else:
+            # شراء: مدين المخزون + مدين ضريبة المدخلات | دائن المورد بالصافي
+            credit_party = net_r
+            debit_inventory = aad_r
+            debit_tax = 0.0
+            if tax_account is not None:
+                debit_tax = max(0.0, round(credit_party - debit_inventory, 2))
+            if debit_tax <= 0:
+                # لا ضريبة أو لا حساب ضريبة → المخزون يتحمل الصافي كاملاً (متوازن)
+                debit_inventory = credit_party
+
+            inventory_account = db.query(models.Account).filter(models.Account.code == "1301").first()
+            if inventory_account:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=inventory_account.id,
+                                           debit=debit_inventory, credit=0.0))
+            if debit_tax > 0 and tax_account is not None:
+                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=tax_account.id,
+                                           debit=debit_tax, credit=0.0))
+            db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id,
+                                       debit=0.0, credit=credit_party))
+
+        db.flush()
+        validate_journal_entry(db, journal_entry.id)
+
+        # ═══ قيد تكلفة البضاعة المباعة — واحد للفاتورة كاملة (بيع فقط) ═══
+        if invoice_type == 'sale' and line_costs_total > 0:
+            cogs_total = round(line_costs_total, 2)
+            cogs_entry = models.JournalEntry(
+                date=invoice_date,
+                description=f"تكلفة البضاعة المباعة - فاتورة {invoice_number}",
+                reference_type="cogs", reference_id=invoice.id, created_by=created_by,
                 period_id=period.id if period else None
             )
-            db.add(journal_entry)
+            db.add(cogs_entry)
             db.flush()
-
-            if invoice_type == 'sale':
-                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id,
-                                           debit=net_amount, credit=0.0))
-                revenue_account = db.query(models.Account).filter(models.Account.code == "4101").first()
-                if revenue_account:
-                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=revenue_account.id,
-                                               debit=0.0, credit=amount_after_discount))
-
-                if item.cost_price > 0:
-                    cogs_entry = models.JournalEntry(
-                        date=invoice_date,
-                        description=f"تكلفة البضاعة المباعة - فاتورة {invoice_number}",
-                        reference_type="cogs", reference_id=invoice.id, created_by=created_by,
-                        period_id=period.id if period else None
-                    )
-                    db.add(cogs_entry)
-                    db.flush()
-                    cogs_account = db.query(models.Account).filter(models.Account.code == "5101").first()
-                    inventory_account = db.query(models.Account).filter(models.Account.code == "1301").first()
-                    if cogs_account and inventory_account:
-                        total_cost = item_data['quantity'] * item.cost_price
-                        db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=cogs_account.id,
-                                                   debit=total_cost, credit=0.0))
-                        db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=inventory_account.id,
-                                                   debit=0.0, credit=total_cost))
-                    db.flush()
-                    validate_journal_entry(db, cogs_entry.id)
-            else:
-                inventory_account = db.query(models.Account).filter(models.Account.code == "1301").first()
-                if inventory_account:
-                    db.add(models.JournalLine(entry_id=journal_entry.id, account_id=inventory_account.id,
-                                               debit=amount_after_discount, credit=0.0))
-                db.add(models.JournalLine(entry_id=journal_entry.id, account_id=party.account_id,
-                                           debit=0.0, credit=net_amount))
-
+            cogs_account = db.query(models.Account).filter(models.Account.code == "5101").first()
+            inventory_account = db.query(models.Account).filter(models.Account.code == "1301").first()
+            if cogs_account and inventory_account:
+                db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=cogs_account.id,
+                                           debit=cogs_total, credit=0.0))
+                db.add(models.JournalLine(entry_id=cogs_entry.id, account_id=inventory_account.id,
+                                           debit=0.0, credit=cogs_total))
             db.flush()
-            validate_journal_entry(db, journal_entry.id)
+            validate_journal_entry(db, cogs_entry.id)
 
+        # ⭐ حماية: قيد واحد فقط لكل فاتورة (يمنع تضخم التقارير نهائياً)
+        try:
+            _dedupe_invoice_journals(db, invoice.id)
+        except Exception:
+            pass
         db.commit()
         _after_write()
         return invoice
@@ -1452,7 +1665,7 @@ def run_annual_depreciation(asset_id, year, created_by=None):
         year_end = datetime(year, 12, 31)
         check_period_open(year_end, entity="تسجيل إهلاك سنوي")
 
-        year_expr = func.to_char(DepreciationRecord.date, literal_column("'YYYY'"))
+        year_expr = _year_expr(db, DepreciationRecord.date)
         existing = db.query(DepreciationRecord).filter(
             DepreciationRecord.asset_id == asset_id,
             year_expr == str(year)
@@ -1714,14 +1927,40 @@ def get_profitability_by_category(start_date=None, end_date=None):
         db.close()
 
 
+
+
+def _month_expr(db, col):
+    """تعبير الشهر (01..12) — يعمل على PostgreSQL و SQLite معاً.
+
+    كانت الدوال تستخدم to_char (PostgreSQL فقط) فتنهار على المرآة المحلية:
+    sqlite3.OperationalError: no such function: to_char
+    """
+    try:
+        if db.get_bind().dialect.name == "sqlite":
+            return func.strftime("%m", col)
+    except Exception:
+        pass
+    return func.to_char(col, literal_column("'MM'"))
+
+
+def _year_expr(db, col):
+    """تعبير السنة (YYYY) — يعمل على PostgreSQL و SQLite معاً."""
+    try:
+        if db.get_bind().dialect.name == "sqlite":
+            return func.strftime("%Y", col)
+    except Exception:
+        pass
+    return func.to_char(col, literal_column("'YYYY'"))
+
+
 def get_monthly_profitability(year=None):
     db = _read()
     try:
         if year is None:
             year = datetime.now().year
 
-        month_expr_inv = func.to_char(models.Invoice.date, literal_column("'MM'"))
-        year_expr_inv = func.to_char(models.Invoice.date, literal_column("'YYYY'"))
+        month_expr_inv = _month_expr(db, models.Invoice.date)
+        year_expr_inv = _year_expr(db, models.Invoice.date)
 
         revenue_rows = db.query(
             month_expr_inv.label('month'),
@@ -1733,8 +1972,8 @@ def get_monthly_profitability(year=None):
         ).group_by(month_expr_inv).all()
         revenue_by_month = {r.month: float(r.revenue or 0) for r in revenue_rows}
 
-        month_expr_line = func.to_char(models.Invoice.date, literal_column("'MM'"))
-        year_expr_line = func.to_char(models.Invoice.date, literal_column("'YYYY'"))
+        month_expr_line = _month_expr(db, models.Invoice.date)
+        year_expr_line = _year_expr(db, models.Invoice.date)
 
         invoice_lines = db.query(
             month_expr_line.label('month'),
@@ -2480,7 +2719,7 @@ def get_balance_sheet(as_of_date):
                     models.JournalEntry.date <= as_of_date
                 ).join(models.JournalEntry).scalar() or 0.0
                 b = (d - c) if is_asset else (c - d)
-                if b > 0:
+                if b != 0:  # ⭐ إظهار كل الأرصدة (بما فيها السالبة) بدل حذفها من التقرير
                     result[acc.name] = b
             return result
 
@@ -2488,6 +2727,7 @@ def get_balance_sheet(as_of_date):
         liabilities = balance_for_type(AccountType.LIABILITY, False)
         equity = balance_for_type(AccountType.EQUITY, False)
 
+        # ⭐ أرباح محتجزة صحيحة: الإيراد − تكلفة المبيعات − المصروفات التشغيلية − الرواتب − الإهلاك
         revenue = db.query(func.sum(models.InvoiceLine.total)).join(
             models.Invoice
         ).filter(
@@ -2496,11 +2736,27 @@ def get_balance_sheet(as_of_date):
             models.Invoice.date <= as_of_date
         ).scalar() or 0.0
 
-        expenses = db.query(func.sum(Expense.amount)).filter(
+        cogs = db.query(func.sum(models.InvoiceLine.quantity * models.InvoiceLine.cost_price)).join(
+            models.Invoice
+        ).filter(
+            models.Invoice.type == 'sale',
+            models.Invoice.status != 'cancelled',
+            models.Invoice.date <= as_of_date
+        ).scalar() or 0.0
+
+        op_exp = db.query(func.sum(Expense.amount)).filter(
             Expense.date <= as_of_date
         ).scalar() or 0.0
 
-        equity['الأرباح المحتجزة'] = revenue - expenses
+        sal_exp = db.query(func.sum(SalaryRecord.gross_salary)).filter(
+            SalaryRecord.payment_date <= as_of_date
+        ).scalar() or 0.0
+
+        dep_exp = db.query(func.sum(DepreciationRecord.depreciation_amount)).filter(
+            DepreciationRecord.date <= as_of_date
+        ).scalar() or 0.0
+
+        equity['الأرباح المحتجزة'] = revenue - cogs - op_exp - sal_exp - dep_exp
 
         return {
             'assets': assets, 'total_assets': sum(assets.values()),
@@ -2689,8 +2945,8 @@ def get_budget_vs_actual(month, year):
         ).all()
 
         comparison = []
-        month_expr = func.to_char(models.JournalEntry.date, literal_column("'MM'"))
-        year_expr = func.to_char(models.JournalEntry.date, literal_column("'YYYY'"))
+        month_expr = _month_expr(db, models.JournalEntry.date)
+        year_expr = _year_expr(db, models.JournalEntry.date)
 
         for budget in budgets:
             account = db.query(models.Account).filter(
@@ -3662,13 +3918,8 @@ def run_recurring_template(template_id, force=False, created_by=None):
             raise ValueError("لا توجد أصناف صالحة!")
 
         # ⚠️ نغلق هذه الجلسة قبل استدعاء create_invoice (يتطلب جلسة مستقلة)
-        invoice_count = db.query(models.Invoice).count()
-        new_invoice_number = f"INV-{invoice_count + 1:06d}"
-        while db.query(models.Invoice).filter(
-            models.Invoice.invoice_number == new_invoice_number
-        ).first():
-            invoice_count += 1
-            new_invoice_number = f"INV-{invoice_count + 1:06d}"
+        # ⭐ ترقيم آمن عبر الدالة الموحدة (فريد عالمياً)
+        new_invoice_number = _ensure_unique_invoice_number(db, None)
 
         t_id = t.id
         t_created = t.created_by

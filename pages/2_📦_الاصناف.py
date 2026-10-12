@@ -320,15 +320,29 @@ if section == SECTIONS[1]:
         st.caption(f"عرض {start + 1} - {min(end, total_count)} من {total_count}")
 
         if total_pages > 1:
+            # ⭐ إصلاح StreamlitWidgetAlreadyInstantiatedError:
+            #    لا يجوز تعديل st.session_state[f"{PFX}page_num"] بعد إنشاء عنصر
+            #    number_input بنفس المفتاح. الحل الرسمي: استخدام on_click callbacks
+            #    (الِ callbacks تُنفّذ قبل إعادة رسم الواجهة فيمكنها تعديل المفتاح بأمان).
+            _page_key = f"{PFX}page_num"
+
+            def _go_prev_page():
+                cur = st.session_state.get(_page_key, 1)
+                if cur and cur > 1:
+                    st.session_state[_page_key] = cur - 1
+
+            def _go_next_page():
+                cur = st.session_state.get(_page_key, 1)
+                if cur and cur < total_pages:
+                    st.session_state[_page_key] = cur + 1
+
             col_prev, col_next = st.columns(2)
             with col_prev:
-                if st.button("⬅️ السابق", disabled=(page_num <= 1), key=f"{PFX}items_prev"):
-                    st.session_state[f"{PFX}page_num"] = page_num - 1
-                    st.rerun()
+                st.button("⬅️ السابق", disabled=(page_num <= 1),
+                          key=f"{PFX}items_prev", on_click=_go_prev_page)
             with col_next:
-                if st.button("التالي ➡️", disabled=(page_num >= total_pages), key=f"{PFX}items_next"):
-                    st.session_state[f"{PFX}page_num"] = page_num + 1
-                    st.rerun()
+                st.button("التالي ➡️", disabled=(page_num >= total_pages),
+                          key=f"{PFX}items_next", on_click=_go_next_page)
 
         st.markdown("---")
         st.subheader("🔎 اختيار صنف للتعديل أو الحذف")
