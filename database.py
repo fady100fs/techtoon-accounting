@@ -47,8 +47,8 @@ DATABASE_URL = _get_database_url()
 engine = create_engine(
     DATABASE_URL,
     poolclass=QueuePool,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=10,
+    max_overflow=20,
     pool_pre_ping=True,
     pool_recycle=280,          # ⭐ يعيد الاتصال قبل نوم Neon (300s)
     pool_timeout=30,
@@ -109,19 +109,93 @@ _READ_SESSION_FACTORY = None
 _READ_INIT_DONE = False
 
 
+def _is_local_db_url(url) -> bool:
+    """هل رابط قاعدة البيانات يشير إلى جهاز محلي (وليس سحابي)؟"""
+    try:
+        import re as _re
+        _u = str(url or "").lower()
+        if _u.startswith("sqlite"):
+            return True
+        if "@" not in _u:
+            return False
+        _host = _u.split("@", 1)[1].split("/", 1)[0]
+        if ":" in _host:
+            _host = _host.split(":", 1)[0]
+        _host = _host.strip("[]() ")
+        if not _host:
+            return False
+        if _host in ("localhost", "127.0.0.1", "::1", "host.docker.internal"):
+            return True
+        if _re.match(r"^192\.168\.\d+\.\d+$", _host):
+            return True
+        if _re.match(r"^10\.\d+\.\d+\.\d+$", _host):
+            return True
+        if _re.match(r"^172\.(1[6-9]|2[0-9]|3[01])\.\d+\.\d+$", _host):
+            return True
+        return False
+    except Exception:
+        return False
+
+
+# ⭐ قاعدة البيانات نفسها محلية → القراءة المباشرة أسرع وأدق من أي مرآة
+DATABASE_URL_IS_LOCAL = _is_local_db_url(DATABASE_URL)
+
+
+def _mirror_has_data() -> bool:
+    """فحص سريع: هل تحتوي المرآة المحلية على بيانات فعلية؟"""
+    try:
+        from sqlalchemy import func as _func
+        import models as _models
+        from local_mirror import LocalSession as _LS
+        _db = _LS()
+        try:
+            for _m in (_models.User, _models.Account, _models.Item,
+                       _models.Party, _models.Invoice):
+                try:
+                    _c = _db.query(_func.count(getattr(_m, "id"))).scalar()
+                    if _c and int(_c) > 0:
+                        return True
+                except Exception:
+                    continue
+            return False
+        finally:
+            _db.close()
+    except Exception:
+        return False
+
+
+_MIRROR_FALLBACK_NOTED = False
+
+
 def get_read_session():
     """
     جلسة قراءة:
-    - محلياً مع SQLite Mirror متاح → SQLite (سريع)
-    - غير ذلك → Neon مباشرة
+    - قاعدة بيانات محلية (localhost/شبكة محلية) → قراءة مباشرة (الأسرع والأدق)
+    - سحابية + وضع محلي + مرآة تحتوي بيانات → المرآة (سريع)
+    - سحابية + وضع محلي + مرآة فارغة → المصدر مباشرة (حماية من بيانات ناقصة)
     """
-    global _READ_SESSION_FACTORY, _READ_INIT_DONE
+    global _READ_SESSION_FACTORY, _READ_INIT_DONE, _MIRROR_FALLBACK_NOTED
     if not _READ_INIT_DONE:
         _READ_INIT_DONE = True
-        if is_local_mode():
+        if is_local_mode() and not DATABASE_URL_IS_LOCAL:
             _READ_SESSION_FACTORY = _try_local()
     if _READ_SESSION_FACTORY is not None:
-        return _READ_SESSION_FACTORY()
+        # ⭐ حماية: مرآة فارغة → اقرأ من المصدر مباشرة وابدأ مزامنة خلفية
+        if _mirror_has_data():
+            return _READ_SESSION_FACTORY()
+        if not _MIRROR_FALLBACK_NOTED:
+            _MIRROR_FALLBACK_NOTED = True
+            try:
+                print("⚠️ المرآة المحلية فارغة — قراءة مؤقتة من المصدر مع مزامنة خلفية")
+            except Exception:
+                pass
+            try:
+                import threading as _th
+                from sync_manager import full_sync as _fs
+                _th.Thread(target=_fs, kwargs={"verbose": False}, daemon=True).start()
+            except Exception:
+                pass
+        return SessionLocal()
     return SessionLocal()
 
 

@@ -27,6 +27,7 @@ from auth_required import require_login, get_current_user_id, get_current_user_n
 from code_search import CodeSearch, FormState
 from form_manager import clear_form, show_clear_hint
 from input_helpers import price_input, qty_input
+from cache_helpers import get_stock_map   # ⭐ لتلميح الكمية المتاحة تحت الصنف
 
 
 # ═══════════════════════════════════════════════════════════
@@ -68,8 +69,9 @@ def used_invoice_numbers(db, invoice_type=None):
     return used
 
 
-def format_invoice_number(n):
-    return f"INV-{int(n):06d}"
+def format_invoice_number(n, invoice_type="sale"):
+    prefix = "SAL" if invoice_type == "sale" else "PUR"
+    return f"{prefix}-{int(n):06d}"
 
 
 def _line_info(db, ln):
@@ -347,6 +349,7 @@ def render_payment_section_for_new(db, net_amount, key_prefix="newinv"):
 # ═══════════════════════════════════════════════════════════
 def render_payment_section(db, invoice):
     net = float(invoice.net_amount or 0)
+    current_user_id = get_current_user_id()
     paid = _get_invoice_paid_amount(db, invoice)
     remaining = max(0.0, net - paid)
 
@@ -793,6 +796,31 @@ def render_invoice_page(invoice_type: str):
         options = [PLACEHOLDER] + list(cs.labels)
         sel_label = st.selectbox("الصنف:", options, key=cs.item_key)
 
+        # ⭐ تلميح المخزون: سطر خافت اللون أسفل الصنف المختار يعرض الكمية المتاحة
+        #    • يظهر عند اختيار الصنف
+        #    • يختفي عند العودة إلى "— اختر صنفاً —" (بعد الضغط على الإضافة أو التفريغ)
+        #    • وعند اختيار صنف آخر يُستبدل بتلميح الصنف الجديد
+        if sel_label != PLACEHOLDER:
+            _hint_item = cs.by_label(sel_label)
+            _hint_html = None
+            if _hint_item is not None:
+                if getattr(_hint_item, "is_kit", False):
+                    _hint_html = "🧩 صنف مدمج — لا يُخصم من المخزون مباشرة"
+                else:
+                    try:
+                        _avail = float(get_stock_map().get(_hint_item.id, 0.0))
+                        _avail_txt = f"{_avail:,.2f}".rstrip("0").rstrip(".")
+                        _warn = " ⚠️ عند/تحت الحد الأدنى" if _avail <= float(getattr(_hint_item, "min_stock", 0) or 0) else ""
+                        _hint_html = f"📦 المتاح بالمخزون: {_avail_txt} وحدة{_warn}"
+                    except Exception:
+                        _hint_html = None
+            if _hint_html:
+                st.markdown(
+                    f'<div style="opacity:0.55;font-size:0.85em;'
+                    f'margin-top:-8px;margin-bottom:6px;">{_hint_html}</div>',
+                    unsafe_allow_html=True,
+                )
+
     if sel_label == PLACEHOLDER:
         current_item = None
     else:
@@ -910,7 +938,7 @@ def render_invoice_page(invoice_type: str):
 
         if save_clicked:
             can_save = True
-            current_num_str = format_invoice_number(inv_no)
+            current_num_str = format_invoice_number(inv_no, invoice_type)
 
             if is_editing:
                 existing = db.query(models.Invoice).filter(

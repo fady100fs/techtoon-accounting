@@ -1,6 +1,7 @@
 # cache_helpers.py
 import os
 import streamlit as st
+from sqlalchemy.orm import joinedload
 
 
 class TTL:
@@ -15,7 +16,7 @@ def _get_ttl():
     mode = os.getenv("DEPLOY_MODE", "cloud").lower()
     if mode == "local":
         return int(os.getenv("LOCAL_CACHE_TTL", "120"))
-    return int(os.getenv("CLOUD_CACHE_TTL", "120"))
+    return int(os.getenv("CLOUD_CACHE_TTL", "3600"))
 
 
 CACHE_TTL = _get_ttl()
@@ -48,6 +49,7 @@ def get_invoices_index(limit: int = 1000):
     try:
         rows = (
             db.query(models.Invoice)
+            .options(joinedload(models.Invoice.party), joinedload(models.Invoice.currency))
             .order_by(models.Invoice.id.desc())
             .limit(limit)
             .all()
@@ -380,5 +382,56 @@ def invalidate_and_sync():
             import threading
             from sync_manager import full_sync
             threading.Thread(target=full_sync, daemon=True).start()
+    except Exception:
+        pass
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_parties_index(limit: int = 2000):
+    import models
+    db = _get_read_session()
+    try:
+        rows = db.query(models.Party).order_by(models.Party.id.desc()).limit(limit).all()
+        return [{"id": r.id, "name": getattr(r,"name","") or "", "type": getattr(r,"type","") or "",
+                 "phone": getattr(r,"phone","") or "", "credit_limit": float(getattr(r,"credit_limit",0) or 0)} for r in rows]
+    finally: db.close()
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_cash_boxes_index():
+    import models
+    db = _get_read_session()
+    try:
+        rows = db.query(models.CashBox).all()
+        return [{"id": r.id, "name": getattr(r,"name","") or "", "code": getattr(r,"code","") or "",
+                 "type": str(getattr(r,"type","")) or ""} for r in rows]
+    finally: db.close()
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_all_users():
+    import models
+    db = _get_read_session()
+    try:
+        rows = db.query(models.User).all()
+        return [{"id": r.id, "username": getattr(r,"username","") or "",
+                 "full_name": getattr(r,"full_name","") or "",
+                 "role": str(getattr(r,"role","")) or "", "is_active": bool(getattr(r,"is_active",True))} for r in rows]
+    finally: db.close()
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_warehouses_index():
+    import models
+    db = _get_read_session()
+    try:
+        rows = db.query(models.Warehouse).filter(models.Warehouse.is_active == True).all()
+        return [{"id": r.id, "name": getattr(r,"name","") or "", "code": getattr(r,"code","") or ""} for r in rows]
+    finally: db.close()
+
+
+def preload_cache():
+    try:
+        get_dashboard_kpis()
+        get_items_with_stock()
+        get_stock_map()
+        get_active_categories()
     except Exception:
         pass

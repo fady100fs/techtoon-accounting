@@ -27,6 +27,14 @@ from session_auth import (
 )
 from sidebar import visible_groups, role_label
 
+# Preload
+try:
+    from cache_helpers import preload_cache
+    preload_cache()
+except Exception:
+    pass
+
+
 # ==========================================================
 # إعدادات شكل المربعات
 # ==========================================================

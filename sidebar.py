@@ -1,3 +1,4 @@
+import time
 # sidebar.py
 # القائمة الجانبية (للصفحات الداخلية) + الصلاحيات + حارس الدخول
 # ⭐ نسخة محدّثة: الصفحات المدموجة تحل محل الصفحات الفردية في القائمة
@@ -125,7 +126,9 @@ GROUPS = [
         ("العملات", "العملات", "💱"),
     ]),
     ("⚙️ عمليات", [
-        ("الفواتير", "الفواتير", "🧾"),
+        ("فواتير البيع", "فواتير_البيع", "🛒"),
+        ("فواتير الشراء", "فواتير_الشراء", "🛍️"),
+        ("فهرس الفواتير", "فهرس_الفواتير", "📋"),
         ("المدفوعات", "المدفوعات", "💰"),
         ("حركات الخزينة", "المصروفات", "💹"),
         ("الخزائن", "الخزائن", "🏦"),
@@ -156,6 +159,8 @@ GROUPS = [
     ]),
 ]
 
+
+_sidebar_last_ts = 0.0
 
 def _norm(text):
     text = re.sub(r"^\d+_", "", text)
@@ -367,42 +372,26 @@ _sidebar_last_run_id = None
 
 
 def _is_sidebar_already_rendered():
-    """⭐ تحقق إذا كانت render_sidebar() استُدعيت بالفعل في هذا الـ script run.
-
-    يمنع خطأ StreamlitDuplicateElementKey عندما تستدعي الصفحة المدموجة
-    render_sidebar() ثم تستدعيها render_invoice_page() مرة ثانية.
-    """
-    global _sidebar_last_run_id
-    try:
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-        ctx = get_script_run_ctx()
-        run_id = id(ctx) if ctx else 0
-    except Exception:
-        run_id = 0
-
-    # script run جديد؟ أعد ضبط العلم
-    if run_id != _sidebar_last_run_id:
-        _sidebar_last_run_id = run_id
-        st.session_state["_sidebar_rendered"] = False
-
-    # سبق رسمها في هذا الـ run؟ تخطّى
-    if st.session_state.get("_sidebar_rendered", False):
-        return True
-
-    st.session_state["_sidebar_rendered"] = True
-    return False
+    global _sidebar_last_ts
+    now = time.time()
+    if now - _sidebar_last_ts > 0.5:
+        _sidebar_last_ts = now
+        return False
+    return True
 
 
 def render_sidebar():
     caller = Path(inspect.currentframe().f_back.f_code.co_filename).resolve()
-    apply_pending_clears()
-    restore_session()
-    _reset_page_state_on_navigation(caller)
-    _apply_pending_state()
+
 
     # ⭐ حارس Idempotency
     if _is_sidebar_already_rendered():
         return
+
+    apply_pending_clears()
+    restore_session()
+    _reset_page_state_on_navigation(caller)
+    _apply_pending_state()
 
     st.markdown(HIDE_DEFAULT_NAV, unsafe_allow_html=True)
     user = st.session_state.get("current_user")

@@ -77,14 +77,27 @@ def _after_write():
     1) امسح كاش Streamlit (لتحديث العرض)
     2) ابدأ مزامنة خلفية (Debounced) محلياً فقط
     """
-    # 1) مسح الكاش
+    # 1) مسح مستهدف للكاش (فقط الدوال المتأثرة بالكتابة)
+    #    لا نمسح كل الكاش — نتركه دافئاً لتسريع التنقل
     try:
-        import streamlit as st
-        st.cache_data.clear()
+        from cache_helpers import (
+            get_invoices_index, get_payments_index,
+            get_dashboard_kpis, get_items_with_stock,
+            get_stock_map, get_inventory_summary,
+        )
+        get_invoices_index.clear()
+        get_payments_index.clear()
+        get_dashboard_kpis.clear()
+        get_items_with_stock.clear()
+        get_stock_map.clear()
+        get_inventory_summary.clear()
     except Exception:
         pass
 
-    # 2) مزامنة خلفية مُجمّعة
+    # 2) لا مزامنة بعد كل حفظ — اعتمد على المزامنة الدورية (كل 30 دقيقة)
+    #    هذا يمنع البطء بعد كل حفظ. الكاش يُحدّث عبر المسح المستهدف أعلاه.
+    return  # تعطيل المزامنة بعد كل حفظ
+    
     try:
         if not is_local_mode():
             return
@@ -99,7 +112,7 @@ def _after_write():
         _sync_pending.set()
 
         def _do_sync():
-            time.sleep(2)  # نافذة تجميع لعدة كتابات سريعة
+            time.sleep(30)  # نافذة تجميع لعدة كتابات سريعة
             try:
                 from sync_manager import quick_sync
                 quick_sync()

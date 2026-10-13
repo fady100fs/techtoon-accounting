@@ -31,9 +31,14 @@ show_navigation_banner(_nav, page_name="العملاء والموردين")
 _open_party_id = _nav.get("_open_parties_id")
 if _open_party_id:
     st.session_state["_focus_party_id"] = _open_party_id
-    _p = db.query(models.Party).filter(models.Party.id == _open_party_id).first()
-    if _p:
-        st.success(f"🎯 الطرف المطلوب: **{_p.name}** ({_p.type})")
+    # ⭐ الإصلاح: كانت db تُستخدم هنا قبل إنشائها (NameError عند التنقل من شجرة الحسابات)
+    _db_tmp = SessionLocal()
+    try:
+        _p = _db_tmp.query(models.Party).filter(models.Party.id == _open_party_id).first()
+        if _p:
+            st.success(f"🎯 الطرف المطلوب: **{_p.name}** ({_p.type})")
+    finally:
+        _db_tmp.close()
 
 current_user_id = get_current_user_id()
 current_user_name = get_current_user_name()
