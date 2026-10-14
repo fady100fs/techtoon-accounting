@@ -1,1436 +1,360 @@
-# cd "D:\\PROG\\Accounting Prog\\Techtoon Accounting"
+# 📦 دليل بناء وتوزيع Techtoon Accounting
 
-# 
+> **آخر تحديث:** 2026-10-13
+> **الإصدار:** v1.0
 
-# @'
+---
 
-# \# 📘 BUILD.md — الدليل الشامل النهائي
+## 📋 المتطلبات الأساسية
 
-# 
+| المتطلب | الإصدار | ملاحظات |
+|---|---|---|
+| Python | 3.11+ | مطلوب |
+| Windows | 10/11 64-bit | لبناء EXE |
+| PyInstaller | 6.0+ | `pip install pyinstaller` |
+| Neon DB | أي حساب | [neon.tech](https://neon.tech) مجاني |
+| Git | أي إصدار | للرفع على GitHub |
 
-# > \*\*آخر تحديث:\*\* 2026-10-10
+---
 
-# > \*\*الإصدار:\*\* 8.0
+## 🚀 خطوات البناء
 
-# > \*\*الحالة:\*\* 🟢 مستقر — Desktop + Cloud + SQLite + Filebase + فواتير منفصلة
+### 1) جهّز بيئة العمل
 
-# 
+```powershell
+cd "D:\PROG\Accounting Prog\Techtoon Accounting"
 
-# \---
+# ثبّت كل المكتبات
+pip install -r requirements.txt
 
-# 
+# ثبّت PyInstaller
+pip install pyinstaller
+```
 
-# \## 📑 فهرس المحتويات
+### 2) تحقق من ملف `.env`
 
-# 
+```env
+DATABASE_URL=postgresql://user:password@host/db?sslmode=require
+SECRET_KEY=your-random-40-char-secret
+DEPLOY_MODE=local
+```
 
-# 1\. \[نظرة عامة](#1-نظرة-عامة)
+### 3) اضبط `TechtoonAccounting.spec`
 
-# 2. \[البنية الحالية](#2-البنية-الحالية)
+تأكد أن `icon=None` (أو ضع `logo.ico` لو متوفر):
 
-# 3. \[رحلة التطوير: v5.0 → v8.0](#3-رحلة-التطوير)
+```python
+# في TechtoonAccounting.spec
+icon=None,  # أو icon=['logo.ico']
+```
 
-# 4. \[الميزات الجديدة](#4-الميزات-الجديدة)
+### 4) اضبط حد الـ recursion (مهم لـ Streamlit)
 
-# 5. \[صفحات الفواتير الجديدة](#5-صفحات-الفواتير-الجديدة)
+```python
+# في أعلى TechtoonAccounting.spec
+import sys ; sys.setrecursionlimit(sys.getrecursionlimit() * 10)
+```
 
-# 6. \[التشغيل على الكومبيوتر](#6-التشغيل-على-الكومبيوتر)
+### 5) ابنِ الـ EXE
 
-# 7. \[التشغيل على الموبايل](#7-التشغيل-على-الموبايل)
+```powershell
+# الطريقة المباشرة
+pyinstaller TechtoonAccounting.spec --noconfirm --clean
 
-# 8. \[SQLite Mirror](#8-sqlite-mirror)
+# أو استخدم سكربت البناء
+.\build_exe.bat
+```
 
-# 9\. \[النسخ الاحتياطي السحابي — Filebase](#9-النسخ-الاحتياطي-السحابي)
+**النتيجة:** `dist\TechtoonAccounting\` يحتوي على:
+```
+TechtoonAccounting.exe          ← البرنامج الرئيسي
+_internal/                      ← ملفات PyInstaller
+```
 
-# 10. \[المعادلات الرياضية](#10-المعادلات-الرياضية)
+> ⏳ البناء يستغرق 5-15 دقيقة
 
-# 11. \[بناء EXE](#11-بناء-exe)
+---
 
-# 12\. \[الملفات المُنشأة](#12-الملفات-المُنشأة)
+## 📦 تجهيز حزمة التوزيع
 
-# 13. \[الملفات المُعدّلة](#13-الملفات-المُعدّلة)
+### 1) أنشئ مجلد الحزمة
 
-# 14. \[المشاكل المحلولة](#14-المشاكل-المحلولة)
+```powershell
+# انسخ الـ EXE + ملفاته
+Copy-Item "dist\TechtoonAccounting" "Techtoon_Accounting_v1.0" -Recurse -Force
 
-# 15. \[المشاكل المعلقة](#15-المشاكل-المعلقة)
+# انسخ الإعدادات
+Copy-Item ".env" "Techtoon_Accounting_v1.0\.env" -Force
+Copy-Item ".streamlit" "Techtoon_Accounting_v1.0\.streamlit" -Recurse -Force
 
-# 16. \[الخطوات القادمة](#16-الخطوات-القادمة)
+# انسخ ملفات المساعدة
+Copy-Item "check_requirements.py" "Techtoon_Accounting_v1.0\" -Force
+```
 
-# 
+### 2) أنشئ `requirements.txt` للعميل
 
-# \---
+```powershell
+@'
+streamlit>=1.30
+pandas>=2.0
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+python-dotenv>=1.0
+plotly>=5.18
+reportlab>=4.0
+xlsxwriter>=3.1
+openpyxl>=3.1
+bcrypt>=4.1
+pywebview>=4.2
+WMI>=1.2
+'@ | Set-Content "Techtoon_Accounting_v1.0\requirements.txt" -Encoding UTF8
+```
 
-# 
+### 3) أنشئ `README.txt` للعميل
 
-# \## 1. نظرة عامة
+```powershell
+@'
+╔════════════════════════════════════════════════╗
+║     Techtoon Accounting — دليل التشغيل         ║
+╚════════════════════════════════════════════════╝
 
-# 
+الخطوات:
+  1) ثبّت المكتبات:
+     pip install -r requirements.txt
 
-# | العنصر | القيمة |
+  2) عدّل DATABASE_URL في ملف .env
+     (اطلب الرابط من البائع أو أنشئ من neon.tech)
 
-# |--------|--------|
+  3) شغّل البرنامج:
+     TechtoonAccounting.exe
 
-# | \*\*الاسم\*\* | Techtoon Accounting |
+الفترة التجريبية: 30 يوماً مجاناً
+بعد انتهائها: أرسل machine_id للبائع لشراء الرخصة
 
-# | \*\*الإصدار\*\* | 8.0 |
+للوصول من الموبايل (نفس شبكة Wi-Fi):
+  شغّل: TechtoonAccounting.exe
+  افتح المتصفح على الموبايل: http://IP_الجهاز:8501
 
-# | \*\*التقنية\*\* | Streamlit + SQLAlchemy + Neon PostgreSQL 16 |
+الدعم الفني: [رقم البائع]
+'@ | Set-Content "Techtoon_Accounting_v1.0\README.txt" -Encoding UTF8
+```
 
-# | \*\*الواجهة\*\* | عربية (RTL) |
+### 4) اضغط في ZIP
+
+```powershell
+Compress-Archive -Path "Techtoon_Accounting_v1.0\*" `
+  -DestinationPath "Techtoon_Accounting_v1.0.zip" -Force
+```
 
-# | \*\*التشغيل\*\* | Desktop (PyWebView) + Cloud (Streamlit) |
+---
 
-# | \*\*رابط Cloud\*\* | https://techtoon.streamlit.app |
+## 🔑 نظام التراخيص
 
-# | \*\*GitHub\*\* | fady100fs/techtoon-accounting |
+### هيكل المجلدات
 
-# | \*\*عدد الصفحات\*\* | 39 (بعد إضافة فواتير البيع والشراء) |
+```
+Techtoon_Accounting/          ← مجلد المشروع
+├── licence/                   ← للبائع فقط
+│   ├── generate_license.py   ← مولّد الرخص
+│   ├── issued_licenses/      ← أرشيف الرخص
+│   └── README_SELLER.md
+├── Techtoon_Accounting_v1.0/ ← حزمة العميل
+│   ├── TechtoonAccounting.exe
+│   ├── .env
+│   ├── requirements.txt
+│   └── README.txt
+└── license_manager.py         ← نظام الترخيص (داخل البرنامج)
+```
 
-# | \*\*عدد الجداول\*\* | 33 (مُزامَنة) |
+### توليد رخصة لعميل
 
-# | \*\*مزود Backup\*\* | Filebase (S3-compatible) |
+```powershell
+cd "D:\PROG\Accounting Prog\Techtoon Accounting\licence"
 
-# 
+# رخصة دائمة
+python generate_license.py --machine-id A1B2C3D4E5F67890 --customer "اسم العميل"
 
-# \---
+# رخصة سنوية
+python generate_license.py --machine-id A1B2C3D4 --customer "الاسم" --type annual --days 365
 
-# 
+# عرض كل الرخص
+python generate_license.py --list
+```
 
-# \## 2. البنية الحالية
+### النتيجة
 
-# Techtoon Accounting/
+```
+  ✔ تم توليد الرخصة!
+    machine_id: A1B2C3D4E5F67890
+    نوع الرخصة: lifetime
+    مدة الصلاحية: دائمة
+    الملف: license.key
+```
 
-# │
+أرسل `license.key` للعميل → يضعه بجانب `TechtoonAccounting.exe` → ✅ مُفعّل!
 
-# ├── 🚀 نقاط الدخول
+---
 
-# │ ├── app.py
+## 📱 تفعيل الوصول من الموبايل
 
-# │ ├── launcher.py # Desktop (PyWebView)
+### الطريقة 1: نفس شبكة Wi-Fi
 
-# │ ├── Techtoon.bat
+```powershell
+# شغّل البرنامج مع تفعيل الموبايل
+python -m streamlit run app.py --server.address=0.0.0.0 --server.port=8501
+```
 
-# │ └── Techtoon.vbs # (لا يعمل — استخدم BAT)
+- افتح متصفح الموبايل: `http://IP_الجهاز:8501`
+- الجهاز والموبايل على نفس Wi-Fi
 
-# │
+### الطريقة 2: من أي مكان (Streamlit Cloud)
 
-# ├── 💾 قاعدة البيانات والمنطق
+1. ارفع الكود على GitHub
+2. اذهب إلى [share.streamlit.io](https://share.streamlit.io)
+3. اربط المستودع
+4. أضف `DATABASE_URL` في Secrets
+5. احصل على رابط: `https://yourname-techtoon.streamlit.app`
+6. افتحه من الموبايل أو أضفه للشاشة الرئيسية
 
-# │ ├── database.py # Neon + Read/Write Sessions
+---
 
-# │ ├── models.py
+## 🔒 أمان الـ SECRET
 
-# │ ├── services.py
+```python
+# في license_manager.py و generate_license.py
+SECRET = b"TECHTOON_LICENSE_2026_V1"
+```
 
-# │ ├── sidebar.py # القائمة (مُعدّلة)
+**قبل التوزيع الأول:**
+```python
+import secrets
+print(secrets.token_bytes(40))
+# ضع الناتج في كلا الملفين
+```
 
-# │ └── navigation\_helper.py
+**لا ترفع `generate_license.py` أو `issued_licenses/` على GitHub:**
 
-# │
+```gitignore
+# .gitignore
+generate_license.py
+issued_licenses/
+licence/
+*.key
+```
 
-# ├── ⚡ التسريع
+---
 
-# │ ├── local\_mirror.py # SQLite Mirror
+## 🧪 اختبار قبل التوزيع
 
-# │ ├── sync\_manager.py # المزامنة
+### 1) اختبر الـ EXE
 
-# │ └── cache\_helpers.py # TTL + get\_invoices\_index (مُحدّث)
+```powershell
+# شغّل على جهازك
+dist\TechtoonAccounting\TechtoonAccounting.exe
+```
 
-# │
+### 2) اختبر الترخيص
 
-# ├── ➗ الإدخال الذكي
+```powershell
+# احصل على machine_id من شاشة الترخيص
+# ولّد رخصة
+python licence\generate_license.py --machine-id XXXX --customer "اختبار"
 
-# │ └── input\_helpers.py # معادلات رياضية
+# ضع license.key بجانب EXE
+copy license.key dist\TechtoonAccounting\
 
-# │
+# أعد التشغيل — يجب أن يظهر "رخصة مدى الحياة"
+```
 
-# ├── ☁️ النسخ الاحتياطي
+### 3) اختبر على جهاز آخر
 
-# │ └── s3\_backup.py # Filebase + export\_all\_tables\_to\_zip
+- انسخ مجلد `dist\TechtoonAccounting` لجهاز آخر
+- شغّل `TechtoonAccounting.exe`
+- يجب أن يعمل (مع فترة تجريبية 30 يوماً)
 
-# │
+---
 
-# ├── 📄 الفواتير (جديد v8.0)
+## 📊 قائمة الملفات للتوزيع
 
-# │ ├── invoice\_page\_common.py # ⭐ وحدة مشتركة
+| الملف | الوصف | للعميل؟ |
+|---|---|---|
+| `TechtoonAccounting.exe` | البرنامج الرئيسي | ✅ |
+| `_internal/` | ملفات PyInstaller | ✅ |
+| `.env` | إعدادات DB | ✅ (يُعدّلها العميل) |
+| `.streamlit/` | إعدادات Streamlit | ✅ |
+| `requirements.txt` | قائمة المكتبات | ✅ |
+| `README.txt` | دليل العميل | ✅ |
+| `license.key` | رخصة العميل | ✅ (بعد الشراء) |
+| `generate_license.py` | مولّد الرخص | ❌ للبائع فقط |
+| `issued_licenses/` | أرشيف الرخص | ❌ للبائع فقط |
 
-# │ ├── pages/4A\_🛒\_فواتير\_البيع.py
+---
 
-# │ └── pages/4B\_🛍️\_فواتير\_الشراء.py
+## 🚀 أوامر سريعة (Quick Reference)
 
-# │
+```powershell
+# بناء EXE
+pyinstaller TechtoonAccounting.spec --noconfirm --clean
 
-# ├── ⚙️ الإدارة والأمان
+# تجهيز الحزمة
+Copy-Item "dist\TechtoonAccounting" "Techtoon_Accounting_v1.0" -Recurse -Force
+Copy-Item ".env" "Techtoon_Accounting_v1.0\" -Force
 
-# │ ├── settings\_manager.py
+# ضغط ZIP
+Compress-Archive -Path "Techtoon_Accounting_v1.0\*" -DestinationPath "Techtoon_v1.0.zip" -Force
 
-# │ ├── period\_guard.py
+# توليد رخصة
+python licence\generate_license.py --machine-id XXXX --customer "الاسم"
 
-# │ ├── session\_auth.py
+# رفع لـ GitHub
+git add -A
+git commit -m "v1.0: إصدار التوزيع"
+git push
+```
 
-# │ └── auth.py / auth\_required.py
+---
 
-# │
+## ✅ قائمة تحقق نهائية قبل التوزيع
 
-# ├── .streamlit/
+```
+□ .env يحتوي DATABASE_URL صحيح
+□ SECRET في license_manager.py = SECRET في generate_license.py
+□ TechtoonAccounting.spec: recursionlimit مضبوط + icon=None
+□ EXE بُني بنجاح (dist\TechtoonAccounting\TechtoonAccounting.exe)
+□ حزمة ZIP جاهزة (Techtoon_v1.0.zip)
+□ generate_license.py في مجلد licence/ (خارج الحزمة)
+□ .gitignore يستثنى generate_license.py و issued_licenses/
+□ اختبرت EXE على جهازك
+□ اختبرت الترخيص (توليد + تفعيل)
+□ ارفع الكود على GitHub
+□ جهّز رابط تحميل الحزمة للعملاء
+```
 
-# │ ├── config.toml
+---
 
-# │ └── secrets.toml
+## 🔄 تحديثات مستقبلية
 
-# │
+### لإصدار نسخة محدّثة:
 
-# ├── data/ # SQLite Mirror
+```powershell
+# 1) حدّث الكود
+# ... تعديلات ...
 
-# │ └── local\_mirror.db
+# 2) ارفع لـ GitHub
+git add -A
+git commit -m "v1.1: تحديثات"
+git push
 
-# │
+# 3) أعد بناء EXE
+pyinstaller TechtoonAccounting.spec --noconfirm --clean
 
-# ├── \_backups/ # نسخ احتياطية للملفات القديمة
+# 4) أعد تجهيز الحزمة
+# (كرر خطوات تجهيز الحزمة)
 
-# │ └── 4\_\_الفواتير.py.old
+# 5) أرسل التحديث للعملاء الحاليين
+# (رخصهم ستبقى فعالة — لا حاجة لإعادة التفعيل)
+```
 
-# │
+---
 
-# └── pages/ # 39 صفحة
-
-# 
-
-# text
-
-# 
-
-# \---
-
-# 
-
-# \## 3. رحلة التطوير
-
-# 
-
-# \### v5.0 → v5.1 (SQLite Mirror + Desktop)
-
-# \- إضافة `local\_mirror.py`, `sync\_manager.py`, `launcher.py`
-
-# \- تعديل `database.py`, `cache\_helpers.py`, `services.py`
-
-# 
-
-# \### v5.1 → v5.2 (Desktop UX)
-
-# \- Splash screen أنيقة
-
-# \- Single Instance Lock
-
-# \- Dynamic Port
-
-# \- CSS لإخفاء Streamlit UI
-
-# 
-
-# \### v5.2 → v6.0 (Backup + Fixes)
-
-# \- `input\_helpers.py` للمعادلات
-
-# \- `export\_all\_tables\_to\_zip()`
-
-# \- إصلاح BOM في `secrets.toml`
-
-# \- إصلاح أخطاء `KeyError`
-
-# 
-
-# \### v6.0 → v7.0 (Filebase + Real Backup)
-
-# \- إصلاح PRAGMA في `sync\_manager.py`
-
-# \- قراءة من Neon مباشرة
-
-# \- Filebase بدل Backblaze
-
-# \- نسخة احتياطية حقيقية 362.7 KB
-
-# 
-
-# \### v7.0 → v8.0 (فواتير منفصلة) ⭐
-
-# \- إنشاء `invoice\_page\_common.py`
-
-# \- إنشاء `pages/4A\_🛒\_فواتير\_البيع.py`
-
-# \- إنشاء `pages/4B\_🛍️\_فواتير\_الشراء.py`
-
-# \- \*\*تاريخ ووقت قابلان للتعديل\*\* في الفواتير
-
-# \- تحديث `sidebar.py` لإظهار الصفحتين الجديدتين
-
-# \- إصلاح `cache\_helpers.get\_invoices\_index` (إضافة 12 حقل جديد)
-
-# \- إصلاح ترتيب `db` في صفحة 6
-
-# 
-
-# \---
-
-# 
-
-# \## 4. الميزات الجديدة
-
-# 
-
-# \### 🖥️ Desktop Launcher
-
-# \- تشغيل بنقرة مزدوجة
-
-# \- نافذة سطح مكتب أصلية (PyWebView)
-
-# \- Splash screen (💼 ينبض + شريط تحميل)
-
-# \- Single Instance Lock (Windows Mutex)
-
-# \- Dynamic Port (8501 → أي منفذ حر)
-
-# 
-
-# \### ⚡ SQLite Mirror
-
-# \- القراءات من SQLite محلياً — أسرع 35-40x
-
-# \- المزامنة كل 30 دقيقة
-
-# \- المزامنة الفورية بعد كل كتابة
-
-# 
-
-# \*\*الأداء:\*\*
-
-# | العملية | Neon | SQLite |
-
-# |---------|------|--------|
-
-# | فتح الأصناف | 1.8 ث | 0.05 ث |
-
-# | لوحة التحكم | 3.2 ث | 0.08 ث |
-
-# | التقارير | 4.5 ث | 0.12 ث |
-
-# 
-
-# \### ☁️ Filebase Backup
-
-# \- Endpoint: `https://s3.filebase.io`
-
-# \- Region: `us-east-1`
-
-# \- Bucket: `techtoon-backups`
-
-# \- تصدير 33 جدولاً كـ CSV في ZIP
-
-# \- الحجم: \*\*\~363 KB\*\* لكل نسخة
-
-# 
-
-# \### ➗ المعادلات الرياضية
-
-# \- حقول السعر/الكمية تقبل معادلات
-
-# \- أمثلة: `650/5`, `500\*1.14`, `200+50-30`
-
-# \- دالة `safe\_eval\_math()` آمنة
-
-# 
-
-# \### 📄 الفواتير المنفصلة (جديد v8.0) ⭐
-
-# 
-
-# \*\*صفحتان منفصلتان:\*\*
-
-# \- 🛒 \*\*فواتير البيع\*\* — تعرض العملاء فقط
-
-# \- 🛍️ \*\*فواتير الشراء\*\* — تعرض الموردين فقط
-
-# 
-
-# \*\*الميزات المشتركة:\*\*
-
-# \- 📅 تاريخ قابل للتعديل (`date\_input`)
-
-# \- 🕐 وقت قابل للتعديل (`time\_input`)
-
-# \- 🔢 رقم فاتورة قابل للتغيير
-
-# \- 📊 عرض الأرقام المستخدمة (1 → 14)
-
-# \- ✏️ تعديل فاتورة سابقة يعيد التاريخ والوقت الأصلي
-
-# 
-
-# \---
-
-# 
-
-# \## 5. صفحات الفواتير الجديدة
-
-# 
-
-# \### البنية
-
-# invoice\_page\_common.py ← كل المنطق
-
-# ├── render\_invoice\_page(type) ← الدالة الرئيسية
-
-# │ ├── نوع: 'sale' أو 'purchase'
-
-# │ ├── تاريخ + وقت قابلان للتعديل
-
-# │ ├── رقم فاتورة قابل للتغيير
-
-# │ └── اختيار طرف (عميل/مورد)
-
-# │
-
-# pages/4A\_🛒\_فواتير\_البيع.py ← استدعاء render\_invoice\_page('sale')
-
-# pages/4B\_🛍️\_فواتير\_الشراء.py ← استدعاء render\_invoice\_page('purchase')
-
-# 
-
-# text
-
-# 
-
-# \### الميزات
-
-# 
-
-# | الميزة | التفصيل |
-
-# |--------|---------|
-
-# | 📅 التاريخ | `date\_input` — افتراضي: اليوم |
-
-# | 🕐 الوقت | `time\_input` — افتراضي: الآن |
-
-# | 🔢 الرقم | `number\_input` — قابل للتعديل |
-
-# | 📊 عرض الأرقام | "1 → 14 (14 فاتورة). التالي: 15" |
-
-# | 💾 الحفظ | `create\_invoice(invoice\_date=...)` |
-
-# | ✏️ التعديل | يستعيد التاريخ والوقت الأصلي |
-
-# | 🔒 الفصل | البيع = عملاء فقط، الشراء = موردين فقط |
-
-# 
-
-# \### كود التصدير
-
-# 
-
-# ```python
-
-# \# في invoice\_page\_common.py
-
-# def render\_invoice\_page(invoice\_type: str):
-
-# &#x20;   """invoice\_type: 'sale' or 'purchase'"""
-
-# &#x20;   is\_sale = invoice\_type == "sale"
-
-# &#x20;   type\_ar = "بيع" if is\_sale else "شراء"
-
-# &#x20;   # ... كامل المنطق
-
-# 6\. التشغيل على الكومبيوتر
-
-# الطريقة 1 — اختصار سطح المكتب (موصى به)
-
-# text
-
-# نقرة مزدوجة على: Techtoon Accounting
-
-# الطريقة 2 — BAT
-
-# text
-
-# انقر مرتين على: Techtoon.bat
-
-# الطريقة 3 — Terminal
-
-# powershell
-
-# cd "D:\\PROG\\Accounting Prog\\Techtoon Accounting"
-
-# python launcher.py
-
-# الطريقة 4 — Streamlit مباشرة
-
-# powershell
-
-# streamlit run app.py
-
-# المتوقع عند التشغيل:
-
-# 
-
-# لا وميض CMD
-
-# 
-
-# Splash screen أنيقة
-
-# 
-
-# نافذة Desktop نظيفة
-
-# 
-
-# 7\. التشغيل على الموبايل
-
-# الرابط: https://techtoon.streamlit.app
-
-# 
-
-# التحديث:
-
-# 
-
-# git push origin main
-
-# 
-
-# انتظر 60-90 ثانية
-
-# 
-
-# التحديث يظهر تلقائياً
-
-# 
-
-# 8\. SQLite Mirror
-
-# التفعيل
-
-# في .env:
-
-# 
-
-# text
-
-# DEPLOY\_MODE=local
-
-# SYNC\_INTERVAL\_SECONDS=1800
-
-# LOCAL\_CACHE\_TTL=1800
-
-# CLOUD\_CACHE\_TTL=120
-
-# المزامنة اليدوية
-
-# powershell
-
-# python -c "from sync\_manager import full\_sync; full\_sync(verbose=True)"
-
-# إحصائيات المزامنة (آخر مرة)
-
-# text
-
-# ✅ الأصناف         = 114 سجل
-
-# ✅ الفواتير        = 7 سجل
-
-# ✅ القيود          = 104 سجل
-
-# المجموع: 653 سجل
-
-# 9\. النسخ الاحتياطي السحابي — Filebase
-
-# الإعدادات
-
-# العنصر	القيمة
-
-# Endpoint	https://s3.filebase.io
-
-# Region	us-east-1
-
-# Bucket	techtoon-backups
-
-# Access Key	9356AA1C20B22C9AAEC3
-
-# Secret	(في AppSetting)
-
-# محتوى النسخة (ZIP)
-
-# text
-
-# backup\_YYYYMMDD\_HHMMSS.zip
-
-# ├── users.csv
-
-# ├── accounts.csv
-
-# ├── parties.csv
-
-# ├── items.csv               ← 114 صنف
-
-# ├── invoices.csv            ← 7 فواتير
-
-# ├── invoice\_lines.csv
-
-# ├── payments.csv
-
-# ├── expenses.csv
-
-# ├── journal\_entries.csv
-
-# ├── journal\_lines.csv
-
-# ├── ... (33 جدول)
-
-# └── \_backup\_info.txt        ← تاريخ + عدد الجداول
-
-# الاستخدام
-
-# افتح صفحة 38 — النسخ الاحتياطي السحابي
-
-# 
-
-# اضغط 🔄 اختبار الاتصال
-
-# 
-
-# اضغط 📤 رفع نسخة جديدة
-
-# 
-
-# المتوقع: \~363 KB
-
-# 
-
-# 10\. المعادلات الرياضية
-
-# في صفحة الفواتير
-
-# python
-
-# from input\_helpers import price\_input, qty\_input
-
-# 
-
-# qty = qty\_input('الكمية:', key='inv\_qty\_1')
-
-# price = price\_input('السعر:', key='inv\_price\_1')
-
-# أمثلة
-
-# تكتب	تحصل على
-
-# 650/5	130.00
-
-# 500\*1.14	570.00
-
-# 200+50-30	220.00
-
-# 1000/3	333.33
-
-# 11\. بناء EXE
-
-# المتطلبات
-
-# powershell
-
-# python -m pip install pyinstaller pywebview psycopg2-binary
-
-# الأمر
-
-# powershell
-
-# cd "D:\\PROG\\Accounting Prog\\Techtoon Accounting"
-
-# pyinstaller --noconfirm --clean --windowed --name TechtoonAccounting --icon logo.ico --add-data "pages;pages" --add-data ".streamlit;.streamlit" --add-data "input\_helpers.py;." --add-data "cache\_helpers.py;." --add-data "database.py;." --add-data "models.py;." --add-data "services.py;." --add-data "sidebar.py;." --add-data "navigation\_helper.py;." --add-data "local\_mirror.py;." --add-data "sync\_manager.py;." --add-data "s3\_backup.py;." --add-data "invoice\_page\_common.py;." --hidden-import psycopg2 --hidden-import streamlit --hidden-import boto3 --hidden-import webview --collect-all streamlit launcher.py
-
-# ⚠️ المشاكل المعروفة
-
-# Permission denied — أغلق Techtoon أولاً
-
-# 
-
-# الحجم كبير (900 MB) — استخدم --exclude-module torch إلخ
-
-# 
-
-# BOM في .spec — يُحل بـ .bat
-
-# 
-
-# 12\. الملفات المُنشأة (v5.0 → v8.0)
-
-# \#	الملف	الوظيفة	الإصدار
-
-# 1	local\_mirror.py	SQLite Mirror	v5.1
-
-# 2	sync\_manager.py	المزامنة	v5.1
-
-# 3	input\_helpers.py	المعادلات	v6.0
-
-# 4	launcher.py	Desktop wrapper	v5.1
-
-# 5	Techtoon.bat	اختصار	v5.1
-
-# 6	build\_exe.ps1	بناء EXE	v5.2
-
-# 7	invoice\_page\_common.py	⭐ وحدة الفواتير المشتركة	v8.0
-
-# 8	pages/4A\_🛒\_فواتير\_البيع.py	⭐ صفحة البيع	v8.0
-
-# 9	pages/4B\_🛍️\_فواتير\_الشراء.py	⭐ صفحة الشراء	v8.0
-
-# 13\. الملفات المُعدّلة
-
-# \#	الملف	التعديل	الإصدار
-
-# 1	database.py	Read/Write Sessions	v5.1
-
-# 2	services.py	130+ دالة	v5.1
-
-# 3	cache\_helpers.py	TTL + get\_invoices\_index (12 حقل)	v8.0
-
-# 4	app.py	CSS إخفاء Streamlit	v5.2
-
-# 5	s3\_backup.py	export\_all\_tables\_to\_zip	v6.0
-
-# 6	sidebar.py	⭐ إضافة فواتير البيع/الشراء	v8.0
-
-# 7	pages/38	ربط بـ s3\_backup	v6.0
-
-# 8	pages/6	إصلاح ترتيب db	v8.0
-
-# 9	pages/2	get\_active\_categories	v5.1
-
-# 10	pages/4	price\_input/qty\_input	v6.0
-
-# 14\. المشاكل المحلولة
-
-# \#	المشكلة	الحل	الإصدار
-
-# 1	KeyError: category\_name	إصلاح get\_items\_with\_stock	v5.1
-
-# 2	ImportError: get\_read\_session	Helpers في database.py	v5.1
-
-# 3	too many values to unpack	get\_active\_categories تُرجع tuples	v5.1
-
-# 4	Invalid date or number	إزالة BOM	v5.2
-
-# 5	Object is already attached	reload قبل الحذف	v5.2
-
-# 6	فتح نسخ متعددة	Single Instance Lock	v5.2
-
-# 7	شريط Streamlit ظاهر	CSS + config	v5.2
-
-# 8	Backblaze 401	Filebase	v7.0
-
-# 9	PRAGMA foreign\_keys	text() wrapper	v7.0
-
-# 10	نسخة احتياطية 0.1 KB	export\_all\_tables\_to\_zip	v7.0
-
-# 11	SQLite فارغ	المزامنة الأولى	v7.0
-
-# 12	KeyError: invoice\_number	إصلاح get\_invoices\_index	v8.0
-
-# 13	الصفحتان لا تظهران	تحديث sidebar.py	v8.0
-
-# 14	BOM في الملفات الجديدة	حفظ UTF-8 بدون BOM	v8.0
-
-# 15\. المشاكل المعلقة
-
-# \#	المشكلة	الأولوية	الحل
-
-# 1	بناء EXE (Permission denied)	🔴 عالية	استخدام \_build.bat
-
-# 2	حجم EXE كبير (900 MB)	🟠 متوسطة	استثناءات إضافية
-
-# 3	Techtoon.vbs لا يعمل	🟢 منخفضة	استخدم .bat
-
-# 4	نسخ احتياطي قديم فارغ	🟢 منخفضة	حذف من Filebase
-
-# 16\. الخطوات القادمة
-
-# فورية
-
-# ✅ صفحات الفواتير المنفصلة — تم
-
-# 
-
-# ✅ التاريخ والوقت قابلان للتعديل — تم
-
-# 
-
-# ✅ إصلاح cache\_helpers — تم
-
-# 
-
-# ✅ تحديث sidebar — تم
-
-# 
-
-# ⏸️ حفظ على GitHub — التالي
-
-# 
-
-# قصيرة المدى
-
-# \[P1] تطبيق input\_helpers على صفحات أخرى
-
-# 
-
-# \[P1] بناء EXE نظيف
-
-# 
-
-# \[P1] اختبار على جهاز آخر
-
-# 
-
-# متوسطة المدى
-
-# \[P2] نسخة خفيفة من EXE (\~250 MB)
-
-# 
-
-# \[P2] جدولة النسخ التلقائية
-
-# 
-
-# طويلة المدى
-
-# \[P3] Multi-tenant
-
-# 
-
-# \[P3] Stripe Integration
-
-# 
-
-# \[P3] Landing Page
-
-# 
-
-# 📊 إحصاءات المشروع
-
-# المقياس	v5.0	v7.0	v8.0
-
-# الملفات المُنشأة	0	8	11
-
-# الملفات المُعدّلة	0	10	13
-
-# المشاكل المحلولة	0	13	17
-
-# سرعة فتح الصفحات	1.8 ث	0.05 ث	0.05 ث
-
-# حجم النسخة الاحتياطية	0.1 KB	363 KB	363 KB
-
-# السجلات المُزامَنة	0	653	653
-
-# عدد الصفحات	38	38	39
-
-# 🔑 معلومات حساسة
-
-# Neon Database
-
-# text
-
-# DATABASE\_URL=postgresql://neondb\_owner:npg\_K9nHWK5Y0JrC@...neon.tech/neondb?sslmode=require
-
-# Filebase
-
-# text
-
-# Access Key: 9356AA1C20B22C9AAEC3
-
-# Secret:     4N4d7NwhExyxyLLfDFDDghMTTKMb3p3ZJWZbjx6T
-
-# Bucket:     techtoon-backups
-
-# Endpoint:   https://s3.filebase.io
-
-# ⚠️ محفوظة في AppSetting — وليست في GitHub.
-
-# 
-
-# 🎯 أوامر سريعة
-
-# تشغيل التطبيق
-
-# powershell
-
-# python launcher.py
-
-# مزامنة SQLite
-
-# powershell
-
-# python -c "from sync\_manager import full\_sync; full\_sync(verbose=True)"
-
-# اختبار Filebase
-
-# powershell
-
-# python -c "from s3\_backup import export\_all\_tables\_to\_zip; d = export\_all\_tables\_to\_zip(); print(f'Size: {len(d)/1024:.1f} KB')"
-
-# رفع على GitHub
-
-# powershell
-
-# git add .
-
-# git commit -m "v8.0 - Separate sale/purchase invoice pages + editable date/time"
-
-# git push origin main
-
-# 📞 للدعم
-
-# Streamlit Cloud: https://share.streamlit.io
-
-# 
-
-# Neon Console: https://console.neon.tech
-
-# 
-
-# Filebase: https://console.filebase.com
-
-# 
-
-# GitHub: https://github.com/fady100fs/techtoon-accounting
-
-# 
-
-# التطبيق: https://techtoon.streamlit.app
-
-# 
-
-# 📝 سجل الإصدارات
-
-# التاريخ	الإصدار	التغييرات
-
-# 2026-10-06	v2.0	المراحل 1-7
-
-# 2026-10-07	v3.0	استقرار
-
-# 2026-10-08	v5.0	شامل
-
-# 2026-10-09	v5.1	SQLite Mirror + Desktop
-
-# 2026-10-09	v5.2	Splash + Streamlit UI + Lock
-
-# 2026-10-09	v6.0	Filebase + Helpers + Fixes
-
-# 2026-10-10	v7.0	SQLite Mirror + Real Backup
-
-# 2026-10-10	v8.0	فواتير البيع/الشراء المنفصلة + تاريخ/وقت قابلان للتعديل
-
-# آخر تحديث: 2026-10-10 — إصدار 8.0
-
-# إعداد: فادي سعد — Techtoon Accounting
-
-# '@ | Out-File -Encoding UTF8 BUILD.md
-
-# 
-
-# احذف BOM من الملف
-
-# b
-
-# y
-
-# t
-
-# e
-
-# s
-
-# =
-
-# \[
-
-# S
-
-# y
-
-# s
-
-# t
-
-# e
-
-# m
-
-# .
-
-# I
-
-# O
-
-# .
-
-# F
-
-# i
-
-# l
-
-# e
-
-# ]
-
-# :
-
-# :
-
-# R
-
-# e
-
-# a
-
-# d
-
-# A
-
-# l
-
-# l
-
-# B
-
-# y
-
-# t
-
-# e
-
-# s
-
-# (
-
-# "
-
-# B
-
-# U
-
-# I
-
-# L
-
-# D
-
-# .
-
-# m
-
-# d
-
-# "
-
-# )
-
-# i
-
-# f
-
-# (
-
-# bytes=\[System.IO.File]::ReadAllBytes("BUILD.md")if(bytes\[0] -eq 0xEF -and 
-
-# b
-
-# y
-
-# t
-
-# e
-
-# s
-
-# \[
-
-# 1
-
-# ]
-
-# −
-
-# e
-
-# q
-
-# 0
-
-# x
-
-# B
-
-# B
-
-# −
-
-# a
-
-# n
-
-# d
-
-# bytes\[1]−eq0xBB−andbytes\[2] -eq 0xBF) {
-
-# \[System.IO.File]::WriteAllBytes("BUILD.md", 
-
-# b
-
-# y
-
-# t
-
-# e
-
-# s
-
-# \[
-
-# 3..
-
-# (
-
-# bytes\[3..(bytes.Length-1)])
-
-# Write-Host " \[OK] BOM أُزيل" -ForegroundColor Green
-
-# }
-
-# 
-
-# Write-Host ""
-
-# Write-Host "═════════════════════════════════════════════" -ForegroundColor Green
-
-# Write-Host " ✅ BUILD.md v8.0 created!" -ForegroundColor Green
-
-# Write-Host "═════════════════════════════════════════════" -ForegroundColor Green
-
-# Write-Host ""
-
-# 
-
-# s
-
-# i
-
-# z
-
-# e
-
-# =
-
-# (
-
-# G
-
-# e
-
-# t
-
-# −
-
-# I
-
-# t
-
-# e
-
-# m
-
-# B
-
-# U
-
-# I
-
-# L
-
-# D
-
-# .
-
-# m
-
-# d
-
-# )
-
-# .
-
-# L
-
-# e
-
-# n
-
-# g
-
-# t
-
-# h
-
-# /
-
-# 1
-
-# K
-
-# B
-
-# W
-
-# r
-
-# i
-
-# t
-
-# e
-
-# −
-
-# H
-
-# o
-
-# s
-
-# t
-
-# "
-
-# 📄الحجم
-
-# :
-
-# size=(Get−ItemBUILD.md).Length/1KBWrite−Host"📄الحجم:(\[math]::Round(
-
-# s
-
-# i
-
-# z
-
-# e
-
-# ,
-
-# 1
-
-# )
-
-# )
-
-# K
-
-# B
-
-# "
-
-# −
-
-# F
-
-# o
-
-# r
-
-# e
-
-# g
-
-# r
-
-# o
-
-# u
-
-# n
-
-# d
-
-# C
-
-# o
-
-# l
-
-# o
-
-# r
-
-# Y
-
-# e
-
-# l
-
-# l
-
-# o
-
-# w
-
-# W
-
-# r
-
-# i
-
-# t
-
-# e
-
-# −
-
-# H
-
-# o
-
-# s
-
-# t
-
-# "
-
-# 📁المسار
-
-# :
-
-# size,1))KB"−ForegroundColorYellowWrite−Host"📁المسار:((Resolve-Path 'BUILD.md').Path)" -ForegroundColor Yellow
-
-# Write-Host ""
-
-# Write-Host "📤 لرفعه على GitHub:" -ForegroundColor Cyan
-
-# Write-Host " git add BUILD.md" -ForegroundColor White
-
-# Write-Host " git commit -m 'BUILD.md v8.0'" -ForegroundColor White
-
-# Write-Host " git push origin main" -ForegroundColor White
-
-# Write-Host ""
-
-# 
-
-# text
-
-# 
-
-# \---
-
-# 
-
-# \## 📊 ما يوثّقه BUILD.md v8.0
-
-# 
-
-# | # | القسم | المحتوى |
-
-# |---|-------|---------|
-
-# | 1-2 | نظرة عامة + البنية | وصف شامل |
-
-# | 3 | رحلة التطوير | v5.0 → v8.0 بالتفصيل |
-
-# | 4 | الميزات الجديدة | Desktop + SQLite + Filebase + \*\*فواتير منفصلة\*\* |
-
-# | \*\*5\*\* | \*\*صفحات الفواتير الجديدة\*\* | \*\*⭐ الجديد في v8.0\*\* |
-
-# | 6-7 | التشغيل | محلي + Cloud |
-
-# | 8-10 | SQLite + Backup + معادلات | التفاصيل |
-
-# | 11 | بناء EXE | الأوامر والمشاكل |
-
-# | 12-13 | الملفات | المُنشأة + المُعدّلة |
-
-# | 14-15 | المشاكل | المحلولة + المعلقة |
-
-# | 16 | الخطوات القادمة | مرتّبة بالأولوية |
-
-# 
-
-# \---
-
-# 
-
-# \## 📤 الخطوة التالية
-
-# 
-
-# \*\*بعد إنشاء BUILD.md:\*\*
-
-# 
-
-# ```powershell
-
-# cd "D:\\PROG\\Accounting Prog\\Techtoon Accounting"
-
-# 
-
-# \# راجع الملفات
-
-# git status --short
-
-# 
-
-# \# أضف كل شيء
-
-# git add .
-
-# 
-
-# \# Commit
-
-# git commit -m "v8.0 - Separate sale/purchase invoices + editable date/time + BUILD.md"
-
-# 
-
-# \# Push
-
-# git push origin main
-
-# سيرفع:
-
-# 
-
-# invoice\_page\_common.py (جديد)
-
-# 
-
-# pages/4A\_🛒\_فواتير\_البيع.py (جديد)
-
-# 
-
-# pages/4B\_🛍️\_فواتير\_الشراء.py (جديد)
-
-# 
-
-# sidebar.py (مُعدّل)
-
-# 
-
-# cache\_helpers.py (مُعدّل)
-
-# 
-
-# pages/6 (مُعدّل)
-
-# 
-
-# BUILD.md (v8.0)
-
+**© 2026 Techtoon Accounting. جميع الحقوق محفوظة.**

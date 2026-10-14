@@ -610,6 +610,117 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, invoice_type, 
 # ═══════════════════════════════════════════════════════════
 #  الصفحة الرئيسية
 # ═══════════════════════════════════════════════════════════
+
+
+def _render_invoice_index(invoice_type):
+    """فهرس فواتير حسب النوع — يقرأ من DB مباشرة بدون كاش."""
+    import pandas as pd
+    from database import SessionLocal
+    from sqlalchemy import func
+    
+    db = SessionLocal()
+    try:
+        q = db.query(models.Invoice).filter(
+            models.Invoice.type == invoice_type
+        ).order_by(models.Invoice.id.desc())
+        
+        all_inv = q.limit(500).all()
+        
+        if not all_inv:
+            st.info("لا توجد فواتير من هذا النوع.")
+            return
+        
+        # خرائط
+        party_ids = list({r.party_id for r in all_inv if r.party_id})
+        party_map = {p.id: (p.name or "") for p in db.query(models.Party).filter(
+            models.Party.id.in_(party_ids)
+        ).all()} if party_ids else {}
+        
+        user_ids = list({r.created_by for r in all_inv if r.created_by})
+        user_map = {u.id: (u.full_name or u.username or "") for u in db.query(models.User).filter(
+            models.User.id.in_(user_ids)
+        ).all()} if user_ids else {}
+        
+        inv_nums = [r.invoice_number for r in all_inv if r.invoice_number]
+        pay_sums = {}
+        if inv_nums:
+            rows_pay = db.query(
+                models.Payment.reference_number,
+                func.sum(models.Payment.amount).label("t"),
+            ).filter(
+                models.Payment.reference_number.in_(inv_nums)
+            ).group_by(models.Payment.reference_number).all()
+            pay_sums = {r[0]: float(r[1] or 0) for r in rows_pay if r[0]}
+        
+        data = []
+        for r in all_inv:
+            net = float(r.net_amount or 0)
+            paid = pay_sums.get(r.invoice_number, 0.0)
+            data.append({
+                "المسلسل": r.invoice_number,
+                "ID": r.id,
+                "التاريخ": r.date.strftime("%Y-%m-%d %H:%M") if r.date else "-",
+                "العميل/المورد": party_map.get(r.party_id, "—"),
+                "المبلغ": f"{net:,.2f}",
+                "المدفوع": f"{paid:,.2f}",
+                "المتبقي": f"{max(0, net-paid):,.2f}",
+                "الحالة": r.status or "pending",
+                "أنشأها": user_map.get(r.created_by, "النظام"),
+            })
+        
+        df = pd.DataFrame(data)
+        st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
+        st.caption(f"إجمالي: {len(data)} فاتورة")
+        
+        st.markdown("---")
+        st.subheader("عرض التفاصيل")
+        
+        inv_ids = [r.id for r in all_inv]
+        inv_nums_map = {r.id: r.invoice_number for r in all_inv}
+        
+        sel_id = st.selectbox(
+            "اختر فاتورة:",
+            options=inv_ids,
+            format_func=lambda x: inv_nums_map.get(x, str(x)),
+            key=f"idx_{invoice_type}_sel"
+        )
+        
+        if sel_id:
+            inv = db.query(models.Invoice).filter(models.Invoice.id == sel_id).first()
+            if inv is None:
+                st.warning("الفاتورة غير موجودة")
+                return
+            
+            party = db.query(models.Party).filter(models.Party.id == inv.party_id).first() if inv.party_id else None
+            lines = db.query(models.InvoiceLine).filter(models.InvoiceLine.invoice_id == inv.id).all()
+            
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                st.write(f"**رقم:** {inv.invoice_number}")
+                st.write(f"**التاريخ:** {inv.date.strftime('%Y-%m-%d %H:%M') if inv.date else '-'}")
+            with col_b:
+                st.write(f"**العميل:** {party.name if party else 'غير محدد'}")
+                st.write(f"**الإجمالي:** {float(inv.net_amount or 0):,.2f}")
+            with col_c:
+                st.write(f"**الحالة:** {inv.status}")
+                st.write(f"**النوع:** {'بيع' if inv.type == 'sale' else 'شراء'}")
+            
+            if lines:
+                item_ids = [l.item_id for l in lines]
+                items_map = {it.id: it.name for it in db.query(models.Item).filter(
+                    models.Item.id.in_(item_ids)
+                ).all()}
+                
+                st.markdown("**الأصناف:**")
+                ld = [{"الصنف": items_map.get(l.item_id, "؟"),
+                       "الكمية": l.quantity,
+                       "السعر": f"{float(l.price or 0):,.2f}",
+                       "الإجمالي": f"{float(l.total or 0):,.2f}"} for l in lines]
+                st.dataframe(pd.DataFrame(ld), use_container_width=True, hide_index=True)
+    finally:
+        db.close()
+
+
 def render_invoice_page(invoice_type: str):
     """invoice_type: 'sale' or 'purchase'"""
     assert invoice_type in ("sale", "purchase")
@@ -641,6 +752,11 @@ def render_invoice_page(invoice_type: str):
     dt_time_key = fs.key("inv_time")
 
     st.title(type_label)
+    _mode = st.radio("", ["➕ فاتورة جديدة", "📋 فهرس الفواتير"], horizontal=True, label_visibility="collapsed", key=f"mode_{invoice_type}")
+    st.markdown("---")
+    if "فهرس" in _mode:
+        _render_invoice_index(invoice_type)
+        return
     show_clear_hint()
     st.info(f"👤 المستخدم: **{current_user_name}**")
 
