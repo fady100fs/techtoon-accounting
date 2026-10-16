@@ -5,7 +5,7 @@ database.py — إعداد الاتصال بـ Neon PostgreSQL (نسخة محس�
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import QueuePool, NullPool, NullPool
 from dotenv import load_dotenv
 
 # تحميل متغيرات البيئة

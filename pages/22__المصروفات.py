@@ -6,6 +6,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from sidebar import render_sidebar, can_modify
 render_sidebar()
 
+
+try:
+    from ui_enhancements import show_breadcrumb
+    show_breadcrumb([("🏠", "/"), ("📋 تكويد", None), ("📦 الأصناف", None)])
+except Exception:
+    pass
+
 import streamlit as st
 import pandas as pd
 import traceback
@@ -52,6 +59,7 @@ except Exception:
 
 st.set_page_config(page_title="حركات الخزينة", page_icon="💹", layout="wide")
 st.title("💹 حركات الخزينة")
+
 show_clear_hint()
 st.info(f"👤 المستخدم: **{current_user_name}** | الدور: **{current_user['role'].value}**")
 

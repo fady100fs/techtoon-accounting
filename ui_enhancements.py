@@ -113,6 +113,41 @@ def render_enhancements():
     .status-pill.ok { background: rgba(16,185,129,0.15); color: #10b981; }
     .status-pill.warn { background: rgba(245,158,11,0.15); color: #f59e0b; }
     .status-pill.err { background: rgba(239,68,68,0.15); color: #ef4444; }
+
+    /* أرقام بعرض ثابت (monospace) */
+    .mono, [data-testid='stDataFrame'] td {
+        font-family: 'Consolas', 'Courier New', monospace !important;
+        font-variant-numeric: tabular-nums;
+    }
+    
+    /* مؤشر "حفظ تلقائي" */
+    .autosave-indicator {
+        position: fixed;
+        top: 12px;
+        right: 20px;
+        background: rgba(16, 185, 129, 0.9);
+        color: white;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        z-index: 9999;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    .autosave-indicator.show {
+        opacity: 1;
+    }
+    
+    /* تحسين حقول الإدخال */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input {
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .stTextInput > div > div > input:focus,
+    .stNumberInput > div > div > input:focus {
+        border-color: #10b981 !important;
+        box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2) !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -169,3 +204,17 @@ def show_cart_badge(count):
     """عرض badge بعدد الأصناف في السلة."""
     if count > 0:
         st.markdown(f'<span class="cart-badge">{count}</span>', unsafe_allow_html=True)
+
+
+def show_autosave(message="💾 تم الحفظ التلقائي"):
+    """عرض مؤشر حفظ تلقائي يختفي بعد 2 ثانية."""
+    st.markdown(f"""
+    <div class="autosave-indicator" id="autosave-ind">{message}</div>
+    <script>
+        const el = document.getElementById('autosave-ind');
+        if (el) {{
+            el.classList.add('show');
+            setTimeout(() => el.classList.remove('show'), 2000);
+        }}
+    </script>
+    """, unsafe_allow_html=True)
