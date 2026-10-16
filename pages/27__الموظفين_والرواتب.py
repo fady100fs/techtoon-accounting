@@ -8,8 +8,12 @@ render_sidebar()
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+def _lazy_px():
+    import plotly.express as px
+    return px
+def _lazy_go():
+    import plotly.graph_objects as go
+    return go
 from datetime import datetime
 from database import SessionLocal
 import models
@@ -372,7 +376,7 @@ with tab2:
 
         # رسم بياني
         if summary["departments"]:
-            fig = px.pie(values=list(summary["departments"].values()),
+            fig = _lazy_px().pie(values=list(summary["departments"].values()),
                           names=list(summary["departments"].keys()),
                           title="توزيع الموظفين حسب الأقسام")
             st.plotly_chart(fig, use_container_width=True)

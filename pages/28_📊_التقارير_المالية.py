@@ -6,11 +6,22 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from sidebar import render_sidebar
 render_sidebar()
 
+
+try:
+    from ui_enhancements import show_breadcrumb
+    show_breadcrumb([("🏠", "/"), ("⚙️ عمليات", None), ("💰 المدفوعات", None)])
+except Exception:
+    pass
+
 # pages/28_📊_التقارير_المالية.py
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+def _lazy_px():
+    import plotly.express as px
+    return px
+def _lazy_go():
+    import plotly.graph_objects as go
+    return go
 from datetime import datetime, timedelta
 from database import SessionLocal
 import models
@@ -87,12 +98,12 @@ with tab1:
             st.error(f"### ❌ صافي الخسارة: {income_data['net_profit']:,.2f} ج.م ({income_data['net_margin']:.1f}%)")
         
         # رسم بياني
-        fig = go.Figure(data=[
-            go.Bar(name='الإيرادات', x=[''], y=[income_data['revenue']], marker_color='#10b981'),
-            go.Bar(name='التكاليف', x=[''], y=[income_data['cogs']], marker_color='#ef4444'),
-            go.Bar(name='الربح الإجمالي', x=[''], y=[income_data['gross_profit']], marker_color='#3b82f6'),
-            go.Bar(name='المصروفات', x=[''], y=[income_data['total_expenses']], marker_color='#f59e0b'),
-            go.Bar(name='صافي الربح', x=[''], y=[income_data['net_profit']], marker_color='#8b5cf6')
+        fig = _lazy_go().Figure(data=[
+            _lazy_go().Bar(name='الإيرادات', x=[''], y=[income_data['revenue']], marker_color='#10b981'),
+            _lazy_go().Bar(name='التكاليف', x=[''], y=[income_data['cogs']], marker_color='#ef4444'),
+            _lazy_go().Bar(name='الربح الإجمالي', x=[''], y=[income_data['gross_profit']], marker_color='#3b82f6'),
+            _lazy_go().Bar(name='المصروفات', x=[''], y=[income_data['total_expenses']], marker_color='#f59e0b'),
+            _lazy_go().Bar(name='صافي الربح', x=[''], y=[income_data['net_profit']], marker_color='#8b5cf6')
         ])
         
         fig.update_layout(
@@ -153,8 +164,8 @@ with tab2:
             st.error(f"️ الميزانية غير متوازنة! الفرق: {difference:,.2f} ج.م")
         
         # رسم بياني
-        fig = go.Figure(data=[
-            go.Pie(
+        fig = _lazy_go().Figure(data=[
+            _lazy_go().Pie(
                 labels=['الأصول', 'الخصوم', 'حقوق الملكية'],
                 values=[balance_data['total_assets'], balance_data['total_liabilities'], balance_data['total_equity']],
                 marker_colors=['#10b981', '#ef4444', '#3b82f6']
@@ -241,11 +252,11 @@ with tab4:
             st.error(f"### ❌ صافي التدفق النقدي: {cash_flow['net_cash_flow']:,.2f} ج.م")
         
         # رسم بياني
-        fig = go.Figure(data=[
-            go.Bar(name='التدفقات الداخلة', x=['العمليات', 'الاستثمار', 'التمويل'], 
+        fig = _lazy_go().Figure(data=[
+            _lazy_go().Bar(name='التدفقات الداخلة', x=['العمليات', 'الاستثمار', 'التمويل'], 
                    y=[cash_flow['cash_from_operations'], cash_flow['cash_from_investing'], cash_flow['cash_from_financing']],
                    marker_color='#10b981'),
-            go.Bar(name='التدفقات الخارجة', x=['العمليات'], 
+            _lazy_go().Bar(name='التدفقات الخارجة', x=['العمليات'], 
                    y=[cash_flow['cash_to_operations']],
                    marker_color='#ef4444')
         ])
@@ -297,8 +308,8 @@ with tab5:
             st.info("المثالي: 4 - 6 مرات سنوياً")
         
         # رسم بياني
-        fig = go.Figure(data=[
-            go.Indicator(
+        fig = _lazy_go().Figure(data=[
+            _lazy_go().Indicator(
                 mode="gauge+number+delta",
                 value=ratios['current_ratio'],
                 domain={'x': [0, 1], 'y': [0, 1]},
@@ -335,6 +346,13 @@ with tab6:
         st.markdown("### ➕ إضافة موازنة شهرية")
         
         # اختيار الحساب
+    # ⭐ skeleton أثناء التحميل
+    try:
+        from loading_indicator import skeleton_table
+        skeleton_table(rows=4, cols=5)
+    except Exception:
+        pass
+
         accounts = db.query(models.Account).all()
         account_dict = {acc.id: f"{acc.code} - {acc.name}" for acc in accounts}
         
@@ -389,9 +407,9 @@ with tab6:
                 st.dataframe(df, use_container_width=True)
                 
                 # رسم بياني
-                fig = go.Figure(data=[
-                    go.Bar(name='الموازنة', x=df['account_name'], y=df['budgeted'], marker_color='#3b82f6'),
-                    go.Bar(name='الفعلي', x=df['account_name'], y=df['actual'], marker_color='#10b981')
+                fig = _lazy_go().Figure(data=[
+                    _lazy_go().Bar(name='الموازنة', x=df['account_name'], y=df['budgeted'], marker_color='#3b82f6'),
+                    _lazy_go().Bar(name='الفعلي', x=df['account_name'], y=df['actual'], marker_color='#10b981')
                 ])
                 
                 fig.update_layout(

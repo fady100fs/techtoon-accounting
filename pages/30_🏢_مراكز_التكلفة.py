@@ -8,8 +8,12 @@ render_sidebar()
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+def _lazy_px():
+    import plotly.express as px
+    return px
+def _lazy_go():
+    import plotly.graph_objects as go
+    return go
 from datetime import datetime, timedelta
 from database import SessionLocal
 import models
@@ -496,7 +500,7 @@ with tab4:
                         st.info("لا توجد معاملات في هذه الفترة.")
 
                     if report['children']:
-                        fig = px.pie(
+                        fig = _lazy_px().pie(
                             pd.DataFrame(report['children']),
                             values='total',
                             names='name',
@@ -531,7 +535,7 @@ with tab4:
                 df = pd.DataFrame(summary)
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
-                fig = px.bar(
+                fig = _lazy_px().bar(
                     df,
                     x='name',
                     y='total_spent',

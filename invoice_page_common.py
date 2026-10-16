@@ -898,7 +898,7 @@ def render_invoice_page(invoice_type: str):
     )
 
     if "invoice_items" not in st.session_state:
-        st.session_state.invoice_items = []
+        st.session_state["invoice_items"] = []
 
     st.markdown("---")
     st.subheader("أصناف الفاتورة")
@@ -968,7 +968,7 @@ def render_invoice_page(invoice_type: str):
         if sel_label == PLACEHOLDER:
             st.error("⚠️ يرجى اختيار صنف أولاً")
         elif current_item is not None and qty > 0 and price > 0:
-            st.session_state.invoice_items.append({
+            st.session_state["invoice_items"].append({
                 "item_name": current_item.name,
                 "quantity": qty,
                 "price": price,
@@ -981,7 +981,7 @@ def render_invoice_page(invoice_type: str):
 
     save_clicked = False
 
-    if st.session_state.invoice_items:
+    if st.session_state["invoice_items"]:
         st.markdown("---")
         st.subheader("تفاصيل الفاتورة")
 
@@ -992,7 +992,7 @@ def render_invoice_page(invoice_type: str):
                 "السعر": float(it["price"]),
                 "الإجمالي": float(it["quantity"]) * float(it["price"]),
             }
-            for it in st.session_state.invoice_items
+            for it in st.session_state["invoice_items"]
         ])
 
         edited_df = st.data_editor(
@@ -1016,7 +1016,7 @@ def render_invoice_page(invoice_type: str):
             if name and q > 0:
                 new_items.append({"item_name": name, "quantity": q, "price": p})
 
-        st.session_state.invoice_items = new_items
+        st.session_state["invoice_items"] = new_items
 
         if not edited_df.empty:
             _q = edited_df["الكمية"].fillna(0).astype(float)
@@ -1087,7 +1087,7 @@ def render_invoice_page(invoice_type: str):
             if not selected_party_id:
                 st.error(f"يرجى اختيار {party_label}")
                 can_save = False
-            elif not st.session_state.invoice_items:
+            elif not st.session_state["invoice_items"]:
                 st.error("يرجى إضافة أصناف للفاتورة")
                 can_save = False
 
@@ -1096,7 +1096,7 @@ def render_invoice_page(invoice_type: str):
                 try:
                     check_period_open(inv_datetime, entity="حفظ فاتورة")
 
-                    names = {ln["item_name"] for ln in st.session_state.invoice_items}
+                    names = {ln["item_name"] for ln in st.session_state["invoice_items"]}
                     changed = False
                     for it in db.query(models.Item).filter(models.Item.name.in_(names)).all():
                         changed = zero_null_numbers(it) or changed
@@ -1114,7 +1114,7 @@ def render_invoice_page(invoice_type: str):
                     invoice = create_invoice(
                         party_id=selected_party_id,
                         invoice_type=invoice_type,
-                        items=st.session_state.invoice_items,
+                        items=st.session_state["invoice_items"],
                         invoice_number=current_num_str,
                         invoice_date=inv_datetime,
                         discount_percentage=discount_pct,

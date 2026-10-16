@@ -6,6 +6,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from sidebar import render_sidebar
 render_sidebar()
 
+
+try:
+    from ui_enhancements import show_breadcrumb
+    show_breadcrumb([("🏠", "/"), ("📋 تكويد", None), ("📦 الأصناف", None)])
+except Exception:
+    pass
+
 # pages/12_⚖️_الميزانية_العمومية.py
 import streamlit as st
 import pandas as pd

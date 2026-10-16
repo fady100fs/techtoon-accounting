@@ -13,6 +13,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from sidebar import render_sidebar
 render_sidebar()
+
+
+try:
+    from ui_enhancements import show_breadcrumb
+    show_breadcrumb([("🏠", "/"), ("⚙️ عمليات", None), ("💰 المدفوعات", None)])
+except Exception:
+    pass
 st.set_page_config(page_title="النسخ السحابي", page_icon="☁️", layout="wide")
 
 from feature_flags import s3_backup_enabled

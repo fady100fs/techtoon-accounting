@@ -10,6 +10,13 @@ st.set_page_config(page_title="النسخ الاحتياطي", page_icon="💾",
 from sidebar import render_sidebar
 render_sidebar()
 
+
+try:
+    from ui_enhancements import show_breadcrumb
+    show_breadcrumb([("🏠", None), ("📊 لوحة التحكم", None)])
+except Exception:
+    pass
+
 from auth_required import require_login, get_current_user_id, get_current_user_name
 current_user = require_login()
 current_user_id = get_current_user_id()

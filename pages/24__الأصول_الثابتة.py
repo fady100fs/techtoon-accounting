@@ -8,7 +8,9 @@ render_sidebar()
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+def _lazy_px():
+    import plotly.express as px
+    return px
 from datetime import datetime
 from database import SessionLocal
 import models
@@ -500,7 +502,7 @@ with tab4:
                     df = pd.DataFrame(schedule)
                     st.dataframe(df, use_container_width=True, hide_index=True)
 
-                    fig = px.line(df, x="السنة", y="صافي القيمة الدفترية",
+                    fig = _lazy_px().line(df, x="السنة", y="صافي القيمة الدفترية",
                                   title="تطور صافي القيمة الدفترية",
                                   markers=True)
                     st.plotly_chart(fig, use_container_width=True)

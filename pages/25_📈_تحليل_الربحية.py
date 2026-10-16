@@ -9,8 +9,12 @@ render_sidebar()
 # pages/25_📈_تحليل_الربحية.py
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+def _lazy_px():
+    import plotly.express as px
+    return px
+def _lazy_go():
+    import plotly.graph_objects as go
+    return go
 from datetime import datetime, timedelta
 from database import SessionLocal
 import models
@@ -120,12 +124,12 @@ with tab1:
     st.markdown("---")
     
     # رسم بياني للملخص
-    fig = go.Figure(data=[
-        go.Bar(name='الإيرادات', x=[''], y=[summary['revenue']], marker_color='#10b981'),
-        go.Bar(name='التكلفة', x=[''], y=[summary['cost']], marker_color='#ef4444'),
-        go.Bar(name='الربح الإجمالي', x=[''], y=[summary['gross_profit']], marker_color='#3b82f6'),
-        go.Bar(name='المصروفات', x=[''], y=[summary['expenses']], marker_color='#f59e0b'),
-        go.Bar(name='صافي الربح', x=[''], y=[summary['net_profit']], marker_color='#8b5cf6')
+    fig = _lazy_go().Figure(data=[
+        _lazy_go().Bar(name='الإيرادات', x=[''], y=[summary['revenue']], marker_color='#10b981'),
+        _lazy_go().Bar(name='التكلفة', x=[''], y=[summary['cost']], marker_color='#ef4444'),
+        _lazy_go().Bar(name='الربح الإجمالي', x=[''], y=[summary['gross_profit']], marker_color='#3b82f6'),
+        _lazy_go().Bar(name='المصروفات', x=[''], y=[summary['expenses']], marker_color='#f59e0b'),
+        _lazy_go().Bar(name='صافي الربح', x=[''], y=[summary['net_profit']], marker_color='#8b5cf6')
     ])
     
     fig.update_layout(
@@ -151,7 +155,7 @@ with tab2:
         st.dataframe(df, use_container_width=True)
         
         # رسم بياني
-        fig = px.scatter(
+        fig = _lazy_px().scatter(
             df,
             x='revenue',
             y='profit_margin',
@@ -171,7 +175,7 @@ with tab2:
         
         if top_items:
             df_top = pd.DataFrame(top_items)
-            fig = px.bar(
+            fig = _lazy_px().bar(
                 df_top,
                 x='item_name',
                 y='profit',
@@ -197,7 +201,7 @@ with tab3:
         st.dataframe(df, use_container_width=True)
         
         # رسم بياني دائري
-        fig = px.pie(
+        fig = _lazy_px().pie(
             df.head(10),
             values='revenue',
             names='customer_name',
@@ -206,7 +210,7 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
         
         # رسم بياني للربحية
-        fig = px.bar(
+        fig = _lazy_px().bar(
             df.head(10),
             x='customer_name',
             y='profit',
@@ -232,7 +236,7 @@ with tab4:
         st.dataframe(df, use_container_width=True)
         
         # رسم بياني
-        fig = px.bar(
+        fig = _lazy_px().bar(
             df,
             x='category_name',
             y='profit',
@@ -243,7 +247,7 @@ with tab4:
         st.plotly_chart(fig, use_container_width=True)
         
         # رسم بياني دائري للإيرادات
-        fig = px.pie(
+        fig = _lazy_px().pie(
             df,
             values='revenue',
             names='category_name',
@@ -269,9 +273,9 @@ with tab5:
         st.dataframe(df, use_container_width=True)
         
         # رسم بياني خطي
-        fig = go.Figure()
+        fig = _lazy_go().Figure()
         
-        fig.add_trace(go.Scatter(
+        fig.add_trace(_lazy_go().Scatter(
             x=df['month_name'],
             y=df['revenue'],
             mode='lines+markers',
@@ -279,7 +283,7 @@ with tab5:
             line=dict(color='#10b981', width=3)
         ))
         
-        fig.add_trace(go.Scatter(
+        fig.add_trace(_lazy_go().Scatter(
             x=df['month_name'],
             y=df['cost'],
             mode='lines+markers',
@@ -287,7 +291,7 @@ with tab5:
             line=dict(color='#ef4444', width=3)
         ))
         
-        fig.add_trace(go.Scatter(
+        fig.add_trace(_lazy_go().Scatter(
             x=df['month_name'],
             y=df['profit'],
             mode='lines+markers',
@@ -364,9 +368,9 @@ with tab6:
             )
         
         # رسم بياني للمقارنة
-        fig = go.Figure(data=[
-            go.Bar(name='الفترة الأولى', x=['الإيرادات', 'الربح'], y=[comparison['period1']['revenue'], comparison['period1']['profit']], marker_color='#3b82f6'),
-            go.Bar(name='الفترة الثانية', x=['الإيرادات', 'الربح'], y=[comparison['period2']['revenue'], comparison['period2']['profit']], marker_color='#10b981')
+        fig = _lazy_go().Figure(data=[
+            _lazy_go().Bar(name='الفترة الأولى', x=['الإيرادات', 'الربح'], y=[comparison['period1']['revenue'], comparison['period1']['profit']], marker_color='#3b82f6'),
+            _lazy_go().Bar(name='الفترة الثانية', x=['الإيرادات', 'الربح'], y=[comparison['period2']['revenue'], comparison['period2']['profit']], marker_color='#10b981')
         ])
         
         fig.update_layout(

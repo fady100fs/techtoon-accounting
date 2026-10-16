@@ -6,6 +6,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from sidebar import render_sidebar
 render_sidebar()
 
+
+try:
+    from ui_enhancements import show_breadcrumb
+    show_breadcrumb([("🏠", None), ("📊 لوحة التحكم", None)])
+except Exception:
+    pass
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime

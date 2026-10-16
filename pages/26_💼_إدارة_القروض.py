@@ -8,8 +8,12 @@ render_sidebar()
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+def _lazy_px():
+    import plotly.express as px
+    return px
+def _lazy_go():
+    import plotly.graph_objects as go
+    return go
 from datetime import datetime
 from database import SessionLocal
 import models
@@ -354,7 +358,7 @@ with tab2:
             st.info("⛔ التعديل والحذف للمدير فقط.")
 
         # رسم بياني
-        fig = px.pie(df, values="المتبقي", names="المقترض/المُقرض",
+        fig = _lazy_px().pie(df, values="المتبقي", names="المقترض/المُقرض",
                      title="توزيع القروض المتبقية")
         st.plotly_chart(fig, use_container_width=True)
     else:

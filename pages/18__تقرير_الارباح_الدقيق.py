@@ -6,6 +6,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from sidebar import render_sidebar
 render_sidebar()
 
+
+try:
+    from ui_enhancements import show_breadcrumb
+    show_breadcrumb([("🏠", "/"), ("⚙️ عمليات", None), ("💰 المدفوعات", None)])
+except Exception:
+    pass
+
 # pages/18_💰_تقرير_الارباح_الدقيق.py
 import streamlit as st
 import pandas as pd
@@ -89,6 +96,13 @@ try:
     with tab2:
         st.subheader("📦 تحليل أرباح كل صنف")
         
+    # ⭐ skeleton أثناء التحميل
+    try:
+        from loading_indicator import skeleton_table
+        skeleton_table(rows=4, cols=5)
+    except Exception:
+        pass
+
         items = db.query(models.Item).filter(models.Item.is_kit == False).all()
         
         if items:

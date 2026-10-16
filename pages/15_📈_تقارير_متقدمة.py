@@ -9,7 +9,9 @@ render_sidebar()
 # pages/15_📈_تقارير_متقدمة.py
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+def _lazy_px():
+    import plotly.express as px
+    return px
 from sqlalchemy import func, and_
 from datetime import datetime, timedelta
 from database import SessionLocal
@@ -61,7 +63,7 @@ try:
             df_top = pd.DataFrame(top_items_query)
             df_top.columns = ['اسم الصنف', 'الكمية المباعة', 'إجمالي الإيرادات']
             
-            fig = px.bar(
+            fig = _lazy_px().bar(
                 df_top, x='اسم الصنف', y='الكمية المباعة', 
                 title='أعلى 10 أصناف مبيعاً', color='الكمية المباعة',
                 color_continuous_scale='Blues'
@@ -77,6 +79,13 @@ try:
         # حساب الأصناف الراكدة
         thirty_days_ago = datetime.now() - timedelta(days=30)
         
+    # ⭐ skeleton أثناء التحميل
+    try:
+        from loading_indicator import skeleton_table
+        skeleton_table(rows=4, cols=5)
+    except Exception:
+        pass
+
         all_items = db.query(models.Item).filter(models.Item.is_kit == False).all()
         dead_stock = []
         
@@ -140,7 +149,7 @@ try:
             df_customers = pd.DataFrame(top_customers_query)
             df_customers.columns = ['اسم العميل', 'عدد الفواتير', 'إجمالي المشتريات']
             
-            fig_pie = px.pie(
+            fig_pie = _lazy_px().pie(
                 df_customers, values='إجمالي المشتريات', names='اسم العميل',
                 title='توزيع المبيعات على أفضل 10 عملاء', hole=0.4
             )

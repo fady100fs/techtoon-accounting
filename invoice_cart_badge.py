@@ -5,7 +5,7 @@ import streamlit as st
 
 def render_cart_badge(invoice_type):
     """عرض عداد الأصناف في الفاتورة الحالية."""
-    items = st.session_state.get(f"invoice_items_{invoice_type}", [])
+    items = st.session_state.get("invoice_items", [])
     count = len(items)
     
     if count > 0:
