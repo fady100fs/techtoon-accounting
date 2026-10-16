@@ -39,6 +39,28 @@ from models import CostCenter, CostAllocation, CostCenterTransaction
 from period_guard import check_period_open, check_period_open_for_entry
 
 
+
+# ⭐ مزامنة عند إغلاق البرنامج
+import atexit
+import signal
+
+def _sync_on_exit(signum=None, frame=None):
+    """مزامنة كاملة عند إغلاق البرنامج — تضمن أن كل الكتابات في SQLite."""
+    try:
+        if is_local_mode():
+            from sync_manager import full_sync
+            full_sync(verbose=False)
+    except Exception:
+        pass
+
+atexit.register(_sync_on_exit)
+
+try:
+    signal.signal(signal.SIGTERM, _sync_on_exit)
+except Exception:
+    pass
+
+
 # ═══════════════════════════════════════════════════════
 #  🔌 طبقة الجلسات (Session Layer)
 # ═══════════════════════════════════════════════════════

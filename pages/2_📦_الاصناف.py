@@ -15,6 +15,13 @@ st.set_page_config(page_title="الأصناف", page_icon="📦", layout="wide")
 from sidebar import render_sidebar, can_modify, require_modify, queue_state_updates
 render_sidebar()
 
+
+try:
+    from ui_enhancements import show_breadcrumb
+    show_breadcrumb([("🏠", "/"), ("📋 تكويد", None), ("📦 الأصناف", None)])
+except Exception:
+    pass
+
 from database import SessionLocal
 import models
 from models import Category

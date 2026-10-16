@@ -414,6 +414,14 @@ def render_sidebar():
                 for label, icon, path, _ in items:
                     st.page_link(path, label=f"{icon} {label}")
         st.divider()
+        
+        # بحث موسّع Ctrl+K
+        try:
+            from global_search import render_global_search
+            render_global_search()
+        except Exception:
+            pass
+
         if st.button("🚪 تسجيل الخروج", key="sidebar_logout"):
             logout_user()
             st.rerun()

@@ -6,10 +6,21 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from sidebar import render_sidebar
 render_sidebar()
 
+
+try:
+    from ui_enhancements import show_breadcrumb
+    show_breadcrumb([("🏠", None), ("📊 لوحة التحكم", None)])
+except Exception:
+    pass
+
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+def _lazy_px():
+    import plotly.express as px
+    return px
+def _lazy_go():
+    import plotly.graph_objects as go
+    return go
 from datetime import datetime, timedelta
 from sqlalchemy import func, literal_column
 from database import SessionLocal
@@ -151,7 +162,7 @@ try:
             df_sales = pd.DataFrame(sales_by_month)
             df_sales.columns = ['الشهر', 'المبيعات']
 
-            fig = px.bar(
+            fig = _lazy_px().bar(
                 df_sales,
                 x='الشهر',
                 y='المبيعات',
@@ -188,7 +199,7 @@ try:
             df_customers = pd.DataFrame(top_customers)
             df_customers.columns = ['العميل', 'المبيعات']
 
-            fig = px.pie(
+            fig = _lazy_px().pie(
                 df_customers,
                 values='المبيعات',
                 names='العميل',
@@ -214,7 +225,7 @@ try:
             df_expenses = pd.DataFrame(expenses_by_category)
             df_expenses.columns = ['التصنيف', 'المبلغ']
 
-            fig = px.bar(
+            fig = _lazy_px().bar(
                 df_expenses,
                 x='التصنيف',
                 y='المبلغ',
@@ -237,8 +248,8 @@ try:
         summary = get_inventory_summary()
 
         if summary["total_items"] > 0:
-            fig = go.Figure(data=[
-                go.Pie(
+            fig = _lazy_go().Figure(data=[
+                _lazy_go().Pie(
                     labels=['مخزون جيد', 'تحت الحد الأدنى'],
                     values=[summary["good_stock_count"], summary["low_stock_count"]],
                     marker_colors=['#11998e', '#f5576c']

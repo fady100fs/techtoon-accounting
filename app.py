@@ -27,6 +27,85 @@ from session_auth import (
 )
 from sidebar import visible_groups, role_label
 
+# === تحسينات الواجهة ===
+try:
+    from sticky_topbar import render_topbar
+    render_topbar()
+except Exception:
+    pass
+
+try:
+    from ui_enhancements import render_enhancements
+    render_enhancements()
+except Exception:
+    pass
+
+try:
+    from quick_stats import render_quick_stats
+    render_quick_stats()
+except Exception:
+    pass
+
+try:
+    from smart_alerts import render_smart_alerts
+    render_smart_alerts()
+except Exception:
+    pass
+
+try:
+    from theme_toggle import render_theme_toggle
+    render_theme_toggle()
+except Exception:
+    pass
+
+try:
+    from print_styles import render_print_styles
+    render_print_styles()
+except Exception:
+    pass
+
+try:
+    from keyboard_nav import enable_enter_navigation, add_enter_hint
+    enable_enter_navigation()
+    add_enter_hint()
+except Exception:
+    pass
+
+
+# Pre-warm cache at startup
+try:
+    import threading
+    def _prewarm_cache():
+        try:
+            from cache_helpers import get_dashboard_kpis, get_invoices_index, get_items_with_stock, get_stock_map, get_active_categories
+            get_dashboard_kpis()
+            get_invoices_index()
+            get_items_with_stock()
+            get_stock_map()
+            get_active_categories()
+        except Exception:
+            pass
+    threading.Thread(target=_prewarm_cache, daemon=True).start()
+except Exception:
+    pass
+
+
+# ⭐ مزامنة سريعة عند بدء التشغيل — تسحب أحدث البيانات من Neon
+try:
+    import os as _os
+    if _os.getenv("DEPLOY_MODE", "cloud").lower() == "local":
+        from sync_manager import quick_sync
+        import threading
+        def _startup_sync():
+            try:
+                quick_sync()
+            except Exception:
+                pass
+        threading.Thread(target=_startup_sync, daemon=True).start()
+except Exception:
+    pass
+
+
 # Preload
 try:
     from cache_helpers import preload_cache

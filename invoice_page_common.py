@@ -612,6 +612,15 @@ def show_saved_invoice(db, inv_no, inv_text, next_no, no_key, fs, invoice_type, 
 # ═══════════════════════════════════════════════════════════
 
 
+
+
+# st.fragment helper — إعادة رسم جزئية (أسرع 5-10x)
+def _fragment(fn):
+    try:
+        return st.fragment(fn)
+    except Exception:
+        return fn
+
 def _render_invoice_index(invoice_type):
     """فهرس فواتير حسب النوع — يقرأ من DB مباشرة بدون كاش."""
     import pandas as pd
@@ -752,6 +761,13 @@ def render_invoice_page(invoice_type: str):
     dt_time_key = fs.key("inv_time")
 
     st.title(type_label)
+    
+    # ⭐ عداد أصناف الفاتورة
+    try:
+        from invoice_cart_badge import render_cart_badge
+        render_cart_badge(invoice_type)
+    except Exception:
+        pass
     _mode = st.radio("", ["➕ فاتورة جديدة", "📋 فهرس الفواتير"], horizontal=True, label_visibility="collapsed", key=f"mode_{invoice_type}")
     st.markdown("---")
     if "فهرس" in _mode:

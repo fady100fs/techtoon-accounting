@@ -223,14 +223,19 @@ def get_inventory_summary():
     try:
         stock_map = {}
         try:
-            rows = db.query(
-                models.InventoryMovement.item_id,
-                func.sum(case(
-                    (models.InventoryMovement.type == "in", models.InventoryMovement.quantity),
-                    else_=-models.InventoryMovement.quantity
-                )).label("balance")
-            ).group_by(models.InventoryMovement.item_id).all()
-            stock_map = {iid: float(b or 0) for iid, b in rows}
+            try:
+                from sqlalchemy import text as _text
+                _r = db.execute(_text("SELECT item_id, balance FROM v_stock_balance")).fetchall()
+                stock_map = {r[0]: float(r[1] or 0) for r in _r}
+            except Exception:
+                rows = db.query(
+                    models.InventoryMovement.item_id,
+                    func.sum(case(
+                        (models.InventoryMovement.type == "in", models.InventoryMovement.quantity),
+                        else_=-models.InventoryMovement.quantity
+                    )).label("balance")
+                ).group_by(models.InventoryMovement.item_id).all()
+                stock_map = {iid: float(b or 0) for iid, b in rows}
         except Exception:
             try:
                 rows2 = db.query(
@@ -286,14 +291,19 @@ def get_items_with_stock(limit: int = 5000):
             pass
         stock_map = {}
         try:
-            rows = db.query(
-                models.InventoryMovement.item_id,
-                func.sum(case(
-                    (models.InventoryMovement.type == "in", models.InventoryMovement.quantity),
-                    else_=-models.InventoryMovement.quantity
-                )).label("balance")
-            ).group_by(models.InventoryMovement.item_id).all()
-            stock_map = {iid: float(b or 0) for iid, b in rows}
+            try:
+                from sqlalchemy import text as _text
+                _r = db.execute(_text("SELECT item_id, balance FROM v_stock_balance")).fetchall()
+                stock_map = {r[0]: float(r[1] or 0) for r in _r}
+            except Exception:
+                rows = db.query(
+                    models.InventoryMovement.item_id,
+                    func.sum(case(
+                        (models.InventoryMovement.type == "in", models.InventoryMovement.quantity),
+                        else_=-models.InventoryMovement.quantity
+                    )).label("balance")
+                ).group_by(models.InventoryMovement.item_id).all()
+                stock_map = {iid: float(b or 0) for iid, b in rows}
         except Exception:
             try:
                 rows2 = db.query(
@@ -346,14 +356,19 @@ def get_stock_map():
     from sqlalchemy import func, case
     db = _get_fresh_session()
     try:
-        rows = db.query(
-            models.InventoryMovement.item_id,
-            func.sum(case(
-                (models.InventoryMovement.type == "in", models.InventoryMovement.quantity),
-                else_=-models.InventoryMovement.quantity
-            )).label("balance")
-        ).group_by(models.InventoryMovement.item_id).all()
-        return {iid: float(b or 0) for iid, b in rows}
+        try:
+            from sqlalchemy import text as _text
+            _r = db.execute(_text("SELECT item_id, balance FROM v_stock_balance")).fetchall()
+            return {r[0]: float(r[1] or 0) for r in _r}
+        except Exception:
+            rows = db.query(
+                models.InventoryMovement.item_id,
+                func.sum(case(
+                    (models.InventoryMovement.type == "in", models.InventoryMovement.quantity),
+                    else_=-models.InventoryMovement.quantity
+                )).label("balance")
+            ).group_by(models.InventoryMovement.item_id).all()
+            return {iid: float(b or 0) for iid, b in rows}
     finally:
         db.close()
 
