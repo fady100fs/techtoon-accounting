@@ -27,12 +27,8 @@ from session_auth import (
 )
 from sidebar import visible_groups, role_label
 
+
 # === تحسينات الواجهة ===
-try:
-    from sticky_topbar import render_topbar
-    render_topbar()
-except Exception:
-    pass
 
 try:
     from ui_enhancements import render_enhancements
@@ -399,6 +395,34 @@ def render_home(user):
             logout_user()
             st.rerun()
 
+    # ⭐ اختصارات سريعة بمربعات ملونة
+    
+    # ⭐ اختصارات سريعة بمربعات ملونة (تعمل داخل webview)
+    st.markdown(
+        "<style>"
+        "height: 80px !important; border-radius: 10px !important; border: none !important;"
+        "color: white !important; font-size: 14px !important; font-weight: 600 !important;"
+        "display: flex !important; flex-direction: column !important;"
+        "align-items: center !important; justify-content: center !important; gap: 4px !important;"
+        "}"
+        "color: white !important; font-size: 14px !important; font-weight: 600 !important;"
+        "}"
+        "font-size: 1.6rem !important;"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+    _qc1, _qc2, _qc3, _qc4 = st.columns(4)
+    with _qc1:
+        st.page_link("pages/4A_🛒_فواتير_البيع.py", label="🛒 فاتورة بيع")
+    with _qc2:
+        st.page_link("pages/4B_🛍️_فواتير_الشراء.py", label="🛍️ فاتورة شراء")
+    with _qc3:
+        st.page_link("pages/41_📥_سند_قبض.py", label="📥 سند قبض")
+    with _qc4:
+        st.page_link("pages/42_📤_سند_صرف.py", label="📤 سند صرف")
+
     if not groups:
         st.info("لا توجد صفحات متاحة لحسابك. تواصل مع مدير النظام.")
         return
@@ -427,47 +451,5 @@ if not current:
 else:
     render_home(current)
 
-# ⭐ إخفاء شريط Streamlit العلوي (لنافذة سطح المكتب)
-st.markdown("""
-<style>
-    #MainMenu {visibility: hidden;}
-    header[data-testid="stHeader"] {display: none;}
-    .stDeployButton {display: none;}
-    [data-testid="stToolbar"] {display: none;}
-    [data-testid="stDecoration"] {display: none;}
-    footer {visibility: hidden;}
-    .block-container {padding-top: 1rem !important;}
-</style>
-""", unsafe_allow_html=True)
 
 
-# ⭐⭐⭐ إخفاء كامل لعناصر Streamlit (نسخة 1.64+)
-st.markdown("""
-<style>
-    /* ═══ شريط علوي ═══ */
-    header[data-testid="stHeader"] { display: none !important; }
-    [data-testid="stToolbar"] { display: none !important; }
-    [data-testid="stStatusWidget"] { display: none !important; }
-    [data-testid="stDecoration"] { display: none !important; }
-    [data-testid="stDeployButton"] { display: none !important; }
-    .stDeployButton { display: none !important; }
-    #MainMenu { visibility: hidden !important; display: none !important; }
-
-    /* ═══ القائمة الافتراضية (multipage nav) ═══ */
-    [data-testid="stSidebarNav"] { display: none !important; }
-    [data-testid="stSidebarNavItems"] { display: none !important; }
-    [data-testid="stSidebarNavSeparator"] { display: none !important; }
-    section[data-testid="stSidebar"] > div:first-child > div:first-child > div:first-child { display: none !important; }
-
-    /* ═══ Footer + Badge ═══ */
-    footer { display: none !important; visibility: hidden !important; }
-    [data-testid="stBottom"] { display: none !important; }
-    .viewerBadge_container__1QSob { display: none !important; }
-    [class*="viewerBadge"] { display: none !important; }
-    a[href*="streamlit.io"] { display: none !important; }
-
-    /* ═══ تحسين المساحة ═══ */
-    .block-container { padding-top: 1rem !important; }
-    section.main > div { padding-top: 0.5rem !important; }
-</style>
-""", unsafe_allow_html=True)

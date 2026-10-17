@@ -6,6 +6,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from sidebar import render_sidebar, queue_state_updates, can_modify
 render_sidebar()
 
+from ui_widgets import render_hierarchical_account_selectbox
+
 
 try:
     from ui_enhancements import show_breadcrumb
