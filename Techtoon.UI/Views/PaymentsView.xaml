@@ -1,0 +1,45 @@
+﻿<UserControl x:Class="Techtoon.UI.Views.PaymentsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FlowDirection="RightToLeft"
+             FontFamily="Tahoma"
+             Background="#FFF5F5F5">
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+            <Button Content="سند قبض" Command="{Binding AddReceiptCommand}"
+                    Width="120" Height="34" Margin="0,0,8,0" FontWeight="Bold"/>
+            <Button Content="سند صرف" Command="{Binding AddPaymentCommand}"
+                    Width="120" Height="34" Margin="0,0,8,0" FontWeight="Bold"/>
+            <Button Content="تعديل" Command="{Binding EditCommand}"
+                    Width="80" Height="34" Margin="0,0,8,0"/>
+            <Button Content="حذف" Command="{Binding DeleteCommand}"
+                    Width="80" Height="34" Margin="0,0,8,0"/>
+            <Button Content="تحديث" Command="{Binding RefreshCommand}"
+                    Width="80" Height="34" Margin="0,0,16,0"/>
+            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                     Width="250" Height="34" VerticalContentAlignment="Center"
+                     ToolTip="بحث باسم الجهة أو المرجع"/>
+        </StackPanel>
+        <DataGrid ItemsSource="{Binding Payments}"
+                  SelectedItem="{Binding SelectedPayment}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  SelectionMode="Single"
+                  AlternatingRowBackground="#FFF9F9F9">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="م" Binding="{Binding Id}" Width="60"/>
+                <DataGridTextColumn Header="التاريخ" Binding="{Binding PaymentDate, StringFormat=yyyy-MM-dd}" Width="120"/>
+                <DataGridTextColumn Header="الجهة" Binding="{Binding PartyName}" Width="200"/>
+                <DataGridTextColumn Header="النوع" Binding="{Binding VoucherType}" Width="90"/>
+                <DataGridTextColumn Header="المبلغ" Binding="{Binding Amount, StringFormat=0.00}" Width="120"/>
+                <DataGridTextColumn Header="الطريقة" Binding="{Binding Method}" Width="100"/>
+                <DataGridTextColumn Header="المرجع" Binding="{Binding Reference}" Width="140"/>
+                <DataGridTextColumn Header="ملاحظات" Binding="{Binding Notes}" Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</UserControl>
