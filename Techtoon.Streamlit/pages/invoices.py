@@ -198,5 +198,10 @@ def new_invoice_form():
                     st.session_state.show_new_invoice = False
                     st.rerun()
                 except Exception as e:
+<<<<<<< HEAD
                     st.error(f"خطأ: {e}")
 
+=======
+                    st.error(f"خطأ: {e}")
+
+>>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5

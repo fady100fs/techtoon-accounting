@@ -147,4 +147,8 @@ def show_statement(party_id):
             else:
                 st.info("لا توجد مدفوعات")
     except Exception as e:
+<<<<<<< HEAD
         st.error(f"خطأ: {e}")
+=======
+        st.error(f"خطأ: {e}")
+>>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5

@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 ﻿web: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+=======
+﻿web: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+>>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
