@@ -4,7 +4,7 @@ import database as db
 from datetime import datetime, date
 
 =======
-﻿import streamlit as st
+ï»¿import streamlit as st
 import database as db
 from datetime import datetime, date
 
@@ -12,7 +12,7 @@ from datetime import datetime, date
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
 st.set_page_config(
     page_title="Techtoon Accounting",
-    page_icon="📊",
+    page_icon="ðŸ“Š",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -44,14 +44,14 @@ def login_page():
     
     col1, col2, col3 = st.columns([1, 1.5, 1])
     with col2:
-        st.markdown("## 📊 Techtoon Accounting")
-        st.markdown("### نظام المحاسبة - تسجيل الدخول")
+        st.markdown("## ðŸ“Š Techtoon Accounting")
+        st.markdown("### Ù†Ø¸Ø§Ù… Ø§Ù„Ù…Ø­Ø§Ø³Ø¨Ø© - ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø¯Ø®ÙˆÙ„")
         st.markdown("---")
         
-        username = st.text_input("اسم المستخدم", placeholder="أدخل اسم المستخدم")
-        password = st.text_input("كلمة المرور", type="password", placeholder="أدخل كلمة المرور")
+        username = st.text_input("Ø§Ø³Ù… Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù…", placeholder="Ø£Ø¯Ø®Ù„ Ø§Ø³Ù… Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù…")
+        password = st.text_input("ÙƒÙ„Ù…Ø© Ø§Ù„Ù…Ø±ÙˆØ±", type="password", placeholder="Ø£Ø¯Ø®Ù„ ÙƒÙ„Ù…Ø© Ø§Ù„Ù…Ø±ÙˆØ±")
         
-        if st.button("🔐 تسجيل الدخول", use_container_width=True):
+        if st.button("ðŸ” ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø¯Ø®ÙˆÙ„", use_container_width=True):
             if username and password:
                 try:
                     cols, rows = db.execute_query(
@@ -69,25 +69,25 @@ def login_page():
                             }
                             st.rerun()
                         else:
-                            st.error("❌ كلمة المرور غير صحيحة")
+                            st.error("âŒ ÙƒÙ„Ù…Ø© Ø§Ù„Ù…Ø±ÙˆØ± ØºÙŠØ± ØµØ­ÙŠØ­Ø©")
                     else:
-                        st.error("❌ المستخدم غير موجود أو معطل")
+                        st.error("âŒ Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù… ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯ Ø£Ùˆ Ù…Ø¹Ø·Ù„")
                 except Exception as e:
-                    st.error(f"❌ خطأ: {e}")
+                    st.error(f"âŒ Ø®Ø·Ø£: {e}")
             else:
-                st.warning("⚠️ أدخل اسم المستخدم وكلمة المرور")
+                st.warning("âš ï¸ Ø£Ø¯Ø®Ù„ Ø§Ø³Ù… Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù… ÙˆÙƒÙ„Ù…Ø© Ø§Ù„Ù…Ø±ÙˆØ±")
 
 <<<<<<< HEAD
 =======
 # ===== Dashboard =====
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
 def dashboard():
-    st.title("📊 لوحة التحكم")
+    st.title("ðŸ“Š Ù„ÙˆØ­Ø© Ø§Ù„ØªØ­ÙƒÙ…")
     
     try:
 <<<<<<< HEAD
 =======
-        # مبيعات اليوم
+        # Ù…Ø¨ÙŠØ¹Ø§Øª Ø§Ù„ÙŠÙˆÙ…
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
         cols, rows = db.execute_query(
             "SELECT COALESCE(SUM(total),0), COUNT(*) FROM invoices WHERE type=%s AND DATE(date)=CURRENT_DATE",
@@ -98,7 +98,7 @@ def dashboard():
         
 <<<<<<< HEAD
 =======
-        # التحصيلات
+        # Ø§Ù„ØªØ­ØµÙŠÙ„Ø§Øª
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
         cols2, rows2 = db.execute_query(
             "SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_type=%s AND DATE(date)=CURRENT_DATE",
@@ -108,7 +108,7 @@ def dashboard():
         
 <<<<<<< HEAD
 =======
-        # الديون المستحقة
+        # Ø§Ù„Ø¯ÙŠÙˆÙ† Ø§Ù„Ù…Ø³ØªØ­Ù‚Ø©
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
         cols3, rows3 = db.execute_query(
             "SELECT COALESCE(SUM(total-paid_amount),0) FROM invoices WHERE type=%s AND paid_amount<total AND status<>%s",
@@ -118,7 +118,7 @@ def dashboard():
         
 <<<<<<< HEAD
 =======
-        # المصروفات
+        # Ø§Ù„Ù…ØµØ±ÙˆÙØ§Øª
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
         cols4, rows4 = db.execute_query(
             "SELECT COALESCE(SUM(amount),0) FROM expenses WHERE DATE(date)=CURRENT_DATE",
@@ -128,7 +128,7 @@ def dashboard():
         
 <<<<<<< HEAD
 =======
-        # قيمة المخزون
+        # Ù‚ÙŠÙ…Ø© Ø§Ù„Ù…Ø®Ø²ÙˆÙ†
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
         cols5, rows5 = db.execute_query(
             "SELECT COALESCE(SUM(opening_quantity * COALESCE(avg_cost_price, cost_price, 0)),0) FROM items WHERE is_kit IS NOT TRUE",
@@ -150,43 +150,43 @@ def dashboard():
         overdue_count = rows7[0][0] if rows7 else 0
         
     except Exception as e:
-        st.error(f"خطأ في تحميل البيانات: {e}")
+        st.error(f"Ø®Ø·Ø£ ÙÙŠ ØªØ­Ù…ÙŠÙ„ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª: {e}")
         today_sales = today_count = collections = receivables = expenses = stock_value = low_stock_count = overdue_count = 0
     
     if low_stock_count > 0:
-        st.warning(f"⚠️ تنبيه: {low_stock_count} صنف بالحد الأدنى للمخزون")
+        st.warning(f"âš ï¸ ØªÙ†Ø¨ÙŠÙ‡: {low_stock_count} ØµÙ†Ù Ø¨Ø§Ù„Ø­Ø¯ Ø§Ù„Ø£Ø¯Ù†Ù‰ Ù„Ù„Ù…Ø®Ø²ÙˆÙ†")
     if overdue_count > 0:
-        st.error(f"🔔 تنبيه: {overdue_count} فاتورة متأخرة السداد")
+        st.error(f"ðŸ”” ØªÙ†Ø¨ÙŠÙ‡: {overdue_count} ÙØ§ØªÙˆØ±Ø© Ù…ØªØ£Ø®Ø±Ø© Ø§Ù„Ø³Ø¯Ø§Ø¯")
     
     col1, col2, col3, col4 = st.columns(4)
 =======
     except Exception as e:
-        st.error(f"خطأ في تحميل البيانات: {e}")
+        st.error(f"Ø®Ø·Ø£ ÙÙŠ ØªØ­Ù…ÙŠÙ„ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª: {e}")
         today_sales = today_count = collections = receivables = expenses = stock_value = 0
     
-    # بطاقات المؤشرات
+    # Ø¨Ø·Ø§Ù‚Ø§Øª Ø§Ù„Ù…Ø¤Ø´Ø±Ø§Øª
     col1, col2, col3 = st.columns(3)
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
     
     with col1:
-        st.metric("💰 مبيعات اليوم", f"{today_sales:,.2f}", f"{today_count} فاتورة")
-        st.metric("💵 التحصيلات", f"{collections:,.2f}", "اليوم")
+        st.metric("ðŸ’° Ù…Ø¨ÙŠØ¹Ø§Øª Ø§Ù„ÙŠÙˆÙ…", f"{today_sales:,.2f}", f"{today_count} ÙØ§ØªÙˆØ±Ø©")
+        st.metric("ðŸ’µ Ø§Ù„ØªØ­ØµÙŠÙ„Ø§Øª", f"{collections:,.2f}", "Ø§Ù„ÙŠÙˆÙ…")
 <<<<<<< HEAD
 =======
-        st.metric("📦 قيمة المخزون", f"{stock_value:,.2f}", "تكلفة")
+        st.metric("ðŸ“¦ Ù‚ÙŠÙ…Ø© Ø§Ù„Ù…Ø®Ø²ÙˆÙ†", f"{stock_value:,.2f}", "ØªÙƒÙ„ÙØ©")
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
     
     with col2:
-        st.metric("💳 ديون العملاء", f"{receivables:,.2f}", "مستحقة")
-        st.metric("💸 مصروفات اليوم", f"{expenses:,.2f}", "مصروف")
+        st.metric("ðŸ’³ Ø¯ÙŠÙˆÙ† Ø§Ù„Ø¹Ù…Ù„Ø§Ø¡", f"{receivables:,.2f}", "Ù…Ø³ØªØ­Ù‚Ø©")
+        st.metric("ðŸ’¸ Ù…ØµØ±ÙˆÙØ§Øª Ø§Ù„ÙŠÙˆÙ…", f"{expenses:,.2f}", "Ù…ØµØ±ÙˆÙ")
     
     with col3:
 <<<<<<< HEAD
-        st.metric("📦 قيمة المخزون", f"{stock_value:,.2f}", "تكلفة")
-        st.metric("⚠️ مخزون منخفض", f"{low_stock_count} صنف")
+        st.metric("ðŸ“¦ Ù‚ÙŠÙ…Ø© Ø§Ù„Ù…Ø®Ø²ÙˆÙ†", f"{stock_value:,.2f}", "ØªÙƒÙ„ÙØ©")
+        st.metric("âš ï¸ Ù…Ø®Ø²ÙˆÙ† Ù…Ù†Ø®ÙØ¶", f"{low_stock_count} ØµÙ†Ù")
     
     with col4:
-        st.metric("🔔 فواتير متأخرة", f"{overdue_count}", "فاتورة")
+        st.metric("ðŸ”” ÙÙˆØ§ØªÙŠØ± Ù…ØªØ£Ø®Ø±Ø©", f"{overdue_count}", "ÙØ§ØªÙˆØ±Ø©")
     
     st.markdown("---")
     
@@ -194,9 +194,9 @@ def dashboard():
     
     with col1:
 =======
-        # أفضل 5 أصناف
+        # Ø£ÙØ¶Ù„ 5 Ø£ØµÙ†Ø§Ù
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
-        st.markdown("### 🏆 أفضل الأصناف مبيعاً")
+        st.markdown("### ðŸ† Ø£ÙØ¶Ù„ Ø§Ù„Ø£ØµÙ†Ø§Ù Ù…Ø¨ÙŠØ¹Ø§Ù‹")
         try:
             cols, rows = db.execute_query(
                 "SELECT i.name, SUM(il.quantity) as qty, SUM(il.total) as total "
@@ -210,20 +210,20 @@ def dashboard():
             if rows:
 <<<<<<< HEAD
                 import pandas as pd
-                df = pd.DataFrame(rows, columns=["الصنف", "الكمية", "الإجمالي"])
+                df = pd.DataFrame(rows, columns=["Ø§Ù„ØµÙ†Ù", "Ø§Ù„ÙƒÙ…ÙŠØ©", "Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ"])
                 st.dataframe(df, use_container_width=True, hide_index=True)
 =======
                 for i, row in enumerate(rows):
-                    st.write(f"{i+1}. **{row[0]}** - {float(row[1]):.0f} وحدة - {float(row[2]):,.2f}")
+                    st.write(f"{i+1}. **{row[0]}** - {float(row[1]):.0f} ÙˆØ­Ø¯Ø© - {float(row[2]):,.2f}")
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
             else:
-                st.info("لا توجد مبيعات في آخر 30 يوم")
+                st.info("Ù„Ø§ ØªÙˆØ¬Ø¯ Ù…Ø¨ÙŠØ¹Ø§Øª ÙÙŠ Ø¢Ø®Ø± 30 ÙŠÙˆÙ…")
         except:
-            st.info("لا توجد بيانات")
+            st.info("Ù„Ø§ ØªÙˆØ¬Ø¯ Ø¨ÙŠØ§Ù†Ø§Øª")
     
 <<<<<<< HEAD
     with col2:
-        st.markdown("### 📋 آخر الفواتير")
+        st.markdown("### ðŸ“‹ Ø¢Ø®Ø± Ø§Ù„ÙÙˆØ§ØªÙŠØ±")
         try:
             cols, rows = db.execute_query(
                 "SELECT i.invoice_number, i.date, i.type, COALESCE(p.name,''), i.total, i.status "
@@ -233,12 +233,12 @@ def dashboard():
             )
             if rows:
                 import pandas as pd
-                df = pd.DataFrame(rows, columns=["رقم", "التاريخ", "النوع", "العميل", "الإجمالي", "الحالة"])
+                df = pd.DataFrame(rows, columns=["Ø±Ù‚Ù…", "Ø§Ù„ØªØ§Ø±ÙŠØ®", "Ø§Ù„Ù†ÙˆØ¹", "Ø§Ù„Ø¹Ù…ÙŠÙ„", "Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ", "Ø§Ù„Ø­Ø§Ù„Ø©"])
                 st.dataframe(df, use_container_width=True, hide_index=True)
             else:
-                st.info("لا توجد فواتير")
+                st.info("Ù„Ø§ ØªÙˆØ¬Ø¯ ÙÙˆØ§ØªÙŠØ±")
         except:
-            st.info("لا توجد بيانات")
+            st.info("Ù„Ø§ ØªÙˆØ¬Ø¯ Ø¨ÙŠØ§Ù†Ø§Øª")
 
 if st.session_state.user is None:
     login_page()
@@ -246,8 +246,8 @@ else:
 =======
     st.markdown("---")
     
-    # آخر الفواتير
-    st.markdown("### 📋 آخر الفواتير")
+    # Ø¢Ø®Ø± Ø§Ù„ÙÙˆØ§ØªÙŠØ±
+    st.markdown("### ðŸ“‹ Ø¢Ø®Ø± Ø§Ù„ÙÙˆØ§ØªÙŠØ±")
     try:
         cols, rows = db.execute_query(
             "SELECT i.invoice_number, i.date, i.type, COALESCE(p.name,''), i.total, i.status "
@@ -257,12 +257,12 @@ else:
         )
         if rows:
             import pandas as pd
-            df = pd.DataFrame(rows, columns=["رقم الفاتورة", "التاريخ", "النوع", "العميل", "الإجمالي", "الحالة"])
+            df = pd.DataFrame(rows, columns=["Ø±Ù‚Ù… Ø§Ù„ÙØ§ØªÙˆØ±Ø©", "Ø§Ù„ØªØ§Ø±ÙŠØ®", "Ø§Ù„Ù†ÙˆØ¹", "Ø§Ù„Ø¹Ù…ÙŠÙ„", "Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ", "Ø§Ù„Ø­Ø§Ù„Ø©"])
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
-            st.info("لا توجد فواتير")
+            st.info("Ù„Ø§ ØªÙˆØ¬Ø¯ ÙÙˆØ§ØªÙŠØ±")
     except Exception as e:
-        st.error(f"خطأ: {e}")
+        st.error(f"Ø®Ø·Ø£: {e}")
 
 # ===== Main =====
 if st.session_state.user is None:
@@ -271,77 +271,77 @@ else:
     # Sidebar
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
     with st.sidebar:
-        st.markdown(f"### 👤 {st.session_state.user['full_name']}")
-        st.caption(f"الدور: {st.session_state.user['role']}")
+        st.markdown(f"### ðŸ‘¤ {st.session_state.user['full_name']}")
+        st.caption(f"Ø§Ù„Ø¯ÙˆØ±: {st.session_state.user['role']}")
         st.markdown("---")
         
 <<<<<<< HEAD
-        # لوحة التحكم (منفصلة)
-        if st.button("📊 لوحة التحكم", use_container_width=True, key="nav_dashboard"):
+        # Ù„ÙˆØ­Ø© Ø§Ù„ØªØ­ÙƒÙ… (Ù…Ù†ÙØµÙ„Ø©)
+        if st.button("ðŸ“Š Ù„ÙˆØ­Ø© Ø§Ù„ØªØ­ÙƒÙ…", use_container_width=True, key="nav_dashboard"):
             st.session_state.current_page = "dashboard"
             st.rerun()
             
-        # قائمة منسدلة: المبيعات والعملاء
-        with st.expander("📄 المبيعات والعملاء", expanded=False):
-            if st.button("🛒 الفواتير", use_container_width=True, key="nav_invoices"):
+        # Ù‚Ø§Ø¦Ù…Ø© Ù…Ù†Ø³Ø¯Ù„Ø©: Ø§Ù„Ù…Ø¨ÙŠØ¹Ø§Øª ÙˆØ§Ù„Ø¹Ù…Ù„Ø§Ø¡
+        with st.expander("ðŸ“„ Ø§Ù„Ù…Ø¨ÙŠØ¹Ø§Øª ÙˆØ§Ù„Ø¹Ù…Ù„Ø§Ø¡", expanded=False):
+            if st.button("ðŸ›’ Ø§Ù„ÙÙˆØ§ØªÙŠØ±", use_container_width=True, key="nav_invoices"):
                 st.session_state.current_page = "invoices"
                 st.rerun()
-            if st.button("👥 العملاء والموردين", use_container_width=True, key="nav_parties"):
+            if st.button("ðŸ‘¥ Ø§Ù„Ø¹Ù…Ù„Ø§Ø¡ ÙˆØ§Ù„Ù…ÙˆØ±Ø¯ÙŠÙ†", use_container_width=True, key="nav_parties"):
                 st.session_state.current_page = "parties"
                 st.rerun()
-            if st.button("💰 المدفوعات", use_container_width=True, key="nav_payments"):
+            if st.button("ðŸ’° Ø§Ù„Ù…Ø¯ÙÙˆØ¹Ø§Øª", use_container_width=True, key="nav_payments"):
                 st.session_state.current_page = "payments"
                 st.rerun()
                 
-        # قائمة منسدلة: المخزون والجرد
-        with st.expander("📦 المخزون والجرد", expanded=True):
-            if st.button("📦 الأصناف", use_container_width=True, key="nav_items"):
+        # Ù‚Ø§Ø¦Ù…Ø© Ù…Ù†Ø³Ø¯Ù„Ø©: Ø§Ù„Ù…Ø®Ø²ÙˆÙ† ÙˆØ§Ù„Ø¬Ø±Ø¯
+        with st.expander("ðŸ“¦ Ø§Ù„Ù…Ø®Ø²ÙˆÙ† ÙˆØ§Ù„Ø¬Ø±Ø¯", expanded=True):
+            if st.button("ðŸ“¦ Ø§Ù„Ø£ØµÙ†Ø§Ù", use_container_width=True, key="nav_items"):
                 st.session_state.current_page = "items"
                 st.rerun()
-            if st.button("📦 أرصدة المخزون", use_container_width=True, key="nav_stock_levels"):
+            if st.button("ðŸ“¦ Ø£Ø±ØµØ¯Ø© Ø§Ù„Ù…Ø®Ø²ÙˆÙ†", use_container_width=True, key="nav_stock_levels"):
                 st.session_state.current_page = "stock_levels"
                 st.rerun()
-            if st.button("📋 جلسات الجرد", use_container_width=True, key="nav_stock_counts"):
+            if st.button("ðŸ“‹ Ø¬Ù„Ø³Ø§Øª Ø§Ù„Ø¬Ø±Ø¯", use_container_width=True, key="nav_stock_counts"):
                 st.session_state.current_page = "stock_counts"
                 st.rerun()
-            if st.button("⚖️ تسويات المخزون", use_container_width=True, key="nav_stock_adjustments"):
+            if st.button("âš–ï¸ ØªØ³ÙˆÙŠØ§Øª Ø§Ù„Ù…Ø®Ø²ÙˆÙ†", use_container_width=True, key="nav_stock_adjustments"):
                 st.session_state.current_page = "stock_adjustments"
                 st.rerun()
-            if st.button("💣 الأصناف التالفة", use_container_width=True, key="nav_damaged_items"):
+            if st.button("ðŸ’£ Ø§Ù„Ø£ØµÙ†Ø§Ù Ø§Ù„ØªØ§Ù„ÙØ©", use_container_width=True, key="nav_damaged_items"):
                 st.session_state.current_page = "damaged_items"
                 st.rerun()
-            if st.button("🗑️ طلبات الشطب", use_container_width=True, key="nav_writeoff_requests"):
+            if st.button("ðŸ—‘ï¸ Ø·Ù„Ø¨Ø§Øª Ø§Ù„Ø´Ø·Ø¨", use_container_width=True, key="nav_writeoff_requests"):
                 st.session_state.current_page = "writeoff_requests"
                 st.rerun()
                 
-        # قائمة منسدلة: المالية والتقارير
-        with st.expander("💹 المالية والتقارير", expanded=False):
-            if st.button("📈 التقارير", use_container_width=True, key="nav_reports"):
+        # Ù‚Ø§Ø¦Ù…Ø© Ù…Ù†Ø³Ø¯Ù„Ø©: Ø§Ù„Ù…Ø§Ù„ÙŠØ© ÙˆØ§Ù„ØªÙ‚Ø§Ø±ÙŠØ±
+        with st.expander("ðŸ’¹ Ø§Ù„Ù…Ø§Ù„ÙŠØ© ÙˆØ§Ù„ØªÙ‚Ø§Ø±ÙŠØ±", expanded=False):
+            if st.button("ðŸ“ˆ Ø§Ù„ØªÙ‚Ø§Ø±ÙŠØ±", use_container_width=True, key="nav_reports"):
                 st.session_state.current_page = "reports"
                 st.rerun()
 =======
-        if st.button("📊 لوحة التحكم", use_container_width=True):
+        if st.button("ðŸ“Š Ù„ÙˆØ­Ø© Ø§Ù„ØªØ­ÙƒÙ…", use_container_width=True):
             st.session_state.current_page = "dashboard"
             st.rerun()
-        if st.button("🛒 الفواتير", use_container_width=True):
+        if st.button("ðŸ›’ Ø§Ù„ÙÙˆØ§ØªÙŠØ±", use_container_width=True):
             st.session_state.current_page = "invoices"
             st.rerun()
-        if st.button("📦 الأصناف", use_container_width=True):
+        if st.button("ðŸ“¦ Ø§Ù„Ø£ØµÙ†Ø§Ù", use_container_width=True):
             st.session_state.current_page = "items"
             st.rerun()
-        if st.button("👥 العملاء والموردين", use_container_width=True):
+        if st.button("ðŸ‘¥ Ø§Ù„Ø¹Ù…Ù„Ø§Ø¡ ÙˆØ§Ù„Ù…ÙˆØ±Ø¯ÙŠÙ†", use_container_width=True):
             st.session_state.current_page = "parties"
             st.rerun()
-        if st.button("💰 المدفوعات", use_container_width=True):
+        if st.button("ðŸ’° Ø§Ù„Ù…Ø¯ÙÙˆØ¹Ø§Øª", use_container_width=True):
             st.session_state.current_page = "payments"
             st.rerun()
-        if st.button("📈 التقارير", use_container_width=True):
+        if st.button("ðŸ“ˆ Ø§Ù„ØªÙ‚Ø§Ø±ÙŠØ±", use_container_width=True):
             st.session_state.current_page = "reports"
             st.rerun()
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
         
         st.markdown("---")
-        if st.button("🚪 تسجيل الخروج", use_container_width=True):
+        if st.button("ðŸšª ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø®Ø±ÙˆØ¬", use_container_width=True):
             st.session_state.user = None
             st.rerun()
     
@@ -389,3 +389,4 @@ else:
         import pages.reports as rep
         rep.show()
 >>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
+ 
