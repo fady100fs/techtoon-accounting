@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.Windows;
 using Npgsql;
@@ -11,11 +11,14 @@ namespace Techtoon.UI.ViewModels
         public int Id { get; set; }
         public DateTime PaymentDate { get; set; }
         public string PartyName { get; set; }
+        public string AccountName { get; set; }
         public string VoucherType { get; set; }
         public decimal Amount { get; set; }
         public string Method { get; set; }
         public string Reference { get; set; }
         public string Notes { get; set; }
+        
+        public string TargetName { get { return string.IsNullOrEmpty(PartyName) ? AccountName : PartyName; } }
     }
 
     public class PaymentsViewModel : ViewModelBase
@@ -76,11 +79,13 @@ namespace Techtoon.UI.ViewModels
                 conn = new NpgsqlConnection(_connectionString);
                 conn.Open();
                 string sql =
-                    "SELECT p.id, p.date, pt.name, p.payment_type, p.amount, " +
+                    "SELECT p.id, p.date, COALESCE(pt.name,''), COALESCE(a.name,''), p.payment_type, p.amount, " +
                     "p.payment_method, p.reference_number, p.notes " +
-                    "FROM payments p LEFT JOIN parties pt ON p.party_id = pt.id ";
+                    "FROM payments p LEFT JOIN parties pt ON p.party_id = pt.id " +
+                    "LEFT JOIN accounts a ON p.account_id = a.id ";
+
                 if (!string.IsNullOrWhiteSpace(SearchText))
-                    sql += "WHERE pt.name ILIKE @q OR p.reference_number ILIKE @q ";
+                    sql += "WHERE pt.name ILIKE @q OR a.name ILIKE @q OR p.reference_number ILIKE @q ";
                 sql += "ORDER BY p.date DESC LIMIT 500";
 
                 using (var cmd = new NpgsqlCommand(sql, conn))
@@ -96,11 +101,12 @@ namespace Techtoon.UI.ViewModels
                                 Id = reader.GetInt32(0),
                                 PaymentDate = reader.GetDateTime(1),
                                 PartyName = reader.IsDBNull(2) ? "" : reader.GetString(2),
-                                VoucherType = reader.IsDBNull(3) ? "" : reader.GetString(3),
-                                Amount = reader.IsDBNull(4) ? 0m : (decimal)reader.GetDouble(4),
-                                Method = reader.IsDBNull(5) ? "" : reader.GetString(5),
-                                Reference = reader.IsDBNull(6) ? "" : reader.GetString(6),
-                                Notes = reader.IsDBNull(7) ? "" : reader.GetString(7)
+                                AccountName = reader.IsDBNull(3) ? "" : reader.GetString(3),
+                                VoucherType = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                                Amount = reader.IsDBNull(5) ? 0m : (decimal)reader.GetDouble(5),
+                                Method = reader.IsDBNull(6) ? "" : reader.GetString(6),
+                                Reference = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                                Notes = reader.IsDBNull(8) ? "" : reader.GetString(8)
                             });
                         }
                     }
@@ -121,8 +127,7 @@ namespace Techtoon.UI.ViewModels
             var win = new PaymentEditWindow();
             win.SetMode(true);
             win.Owner = Application.Current.MainWindow;
-            if (win.ShowDialog() == true)
-                LoadPayments();
+            if (win.ShowDialog() == true) LoadPayments();
         }
 
         private void AddPayment()
@@ -130,28 +135,21 @@ namespace Techtoon.UI.ViewModels
             var win = new PaymentEditWindow();
             win.SetMode(false);
             win.Owner = Application.Current.MainWindow;
-            if (win.ShowDialog() == true)
-                LoadPayments();
+            if (win.ShowDialog() == true) LoadPayments();
         }
 
         private void Edit()
         {
             if (SelectedPayment == null) return;
             var win = new PaymentEditWindow();
-            win.LoadForEdit(SelectedPayment.Id);
             win.Owner = Application.Current.MainWindow;
-            if (win.ShowDialog() == true)
-                LoadPayments();
+            if (win.ShowDialog() == true) LoadPayments();
         }
 
         private void Delete()
         {
             if (SelectedPayment == null) return;
-            var result = MessageBox.Show(
-                "Delete payment #" + SelectedPayment.Id + "?",
-                "Confirm",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
+            var result = MessageBox.Show("Delete payment #" + SelectedPayment.Id + "?", "Confirm", MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (result != MessageBoxResult.Yes) return;
 
             NpgsqlConnection conn = null;

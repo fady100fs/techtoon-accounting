@@ -8,7 +8,7 @@
         Background="{StaticResource BackgroundBrush}"
         FlowDirection="RightToLeft"
         UseLayoutRounding="True"
-        TextOptions.TextFormattingMode="Display">
+        TextOptions.TextFormattingMode="Display" PreviewKeyDown="Window_PreviewKeyDown">
 
     <Window.DataContext>
         <vm:MainViewModel/>
