@@ -6,16 +6,14 @@ from datetime import datetime
 def show():
     st.title("🛒 الفواتير")
     
-    # Search & Filter
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         search = st.text_input("🔍 بحث", placeholder="رقم الفاتورة أو اسم العميل")
     with col2:
         inv_type = st.selectbox("النوع", ["الكل", "sales", "purchase", "sales_return", "purchase_return"])
     with col3:
-        st.write("")  # spacer
+        st.write("")
     
-    # Build query
     query = """
         SELECT i.id, i.invoice_number, i.date, i.type, COALESCE(p.name,'') as party, 
                i.total, i.paid_amount, i.status
@@ -39,11 +37,8 @@ def show():
         cols, rows = db.execute_query(query, tuple(params), fetch=True)
         if rows:
             df = pd.DataFrame(rows, columns=cols)
-            
-            # Display table
             st.dataframe(df, use_container_width=True, hide_index=True)
             
-            # Actions
             st.markdown("### إجراءات")
             selected_id = st.selectbox("اختر فاتورة", [r[0] for r in rows], 
                                        format_func=lambda x: f"#{x} - {[r[1] for r in rows if r[0]==x][0]}")
@@ -60,7 +55,6 @@ def show():
     except Exception as e:
         st.error(f"خطأ: {e}")
     
-    # New invoice button
     st.markdown("---")
     if st.button("➕ فاتورة جديدة"):
         st.session_state.show_new_invoice = True
@@ -70,7 +64,6 @@ def show():
 
 def show_details(invoice_id):
     try:
-        # Header
         cols, rows = db.execute_query(
             "SELECT i.invoice_number, i.date, i.type, COALESCE(p.name,''), i.total, i.paid_amount, i.status, i.notes "
             "FROM invoices i LEFT JOIN parties p ON i.party_id=p.id WHERE i.id=%s",
@@ -90,7 +83,6 @@ def show_details(invoice_id):
                 st.write(f"**الإجمالي:** {r[4]:.2f}")
                 st.write(f"**المدفوع:** {r[5]:.2f}")
             
-            # Lines
             st.markdown("#### الأصناف")
             cols2, rows2 = db.execute_query(
                 "SELECT i.name, il.quantity, il.price, il.total "
@@ -107,7 +99,6 @@ def delete_invoice(invoice_id):
     st.warning(f"⚠️ سيتم حذف الفاتورة #{invoice_id} وكل تفاصيلها!")
     if st.button("تأكيد الحذف", type="primary"):
         try:
-            # Delete in correct order
             db.execute_query("DELETE FROM invoice_lines WHERE invoice_id=%s", (invoice_id,))
             db.execute_query("DELETE FROM invoice_payments WHERE invoice_id=%s", (invoice_id,))
             db.execute_query("DELETE FROM payments WHERE invoice_id=%s", (invoice_id,))
@@ -124,7 +115,6 @@ def new_invoice_form():
     with st.form("new_invoice"):
         col1, col2 = st.columns(2)
         with col1:
-            # Get parties
             _, parties = db.execute_query("SELECT id, name FROM parties WHERE is_active=TRUE ORDER BY name", fetch=True)
             party_options = {p[1]: p[0] for p in parties} if parties else {}
             party = st.selectbox("العميل/المورد", list(party_options.keys()) if party_options else ["لا يوجد"])
@@ -133,14 +123,12 @@ def new_invoice_form():
             inv_date = st.date_input("التاريخ", datetime.now())
         
         with col2:
-            # Get items
             _, items = db.execute_query("SELECT id, name FROM items WHERE is_active=TRUE ORDER BY name", fetch=True)
             item_options = {i[1]: i[0] for i in items} if items else {}
             
             status = st.selectbox("الحالة", ["draft", "confirmed", "paid"])
             notes = st.text_area("ملاحظات")
         
-        # Invoice lines
         st.markdown("#### الأصناف")
         num_lines = st.number_input("عدد الأصناف", 1, 20, 1)
         lines = []
@@ -174,11 +162,9 @@ def new_invoice_form():
                 st.error("❌ أضف صنفاً واحداً على الأقل")
             else:
                 try:
-                    # Generate invoice number
                     inv_num = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
                     party_id = party_options.get(party)
                     
-                    # Insert invoice
                     _, result = db.execute_query(
                         "INSERT INTO invoices (invoice_number, date, party_id, type, total, paid_amount, status, currency_id, notes) "
                         "VALUES (%s, %s, %s, %s, %s, 0, %s, 1, %s) RETURNING id",
@@ -186,7 +172,6 @@ def new_invoice_form():
                     )
                     invoice_id = result[0][0]
                     
-                    # Insert lines
                     for line in lines:
                         db.execute_query(
                             "INSERT INTO invoice_lines (invoice_id, item_id, quantity, price, total, discount) "
@@ -198,10 +183,4 @@ def new_invoice_form():
                     st.session_state.show_new_invoice = False
                     st.rerun()
                 except Exception as e:
-<<<<<<< HEAD
                     st.error(f"خطأ: {e}")
-
-=======
-                    st.error(f"خطأ: {e}")
-
->>>>>>> 8325fba6af09ee66ab808da0e5526f6efad8e4c5
