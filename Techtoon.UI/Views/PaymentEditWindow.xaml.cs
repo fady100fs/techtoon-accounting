@@ -80,7 +80,17 @@ namespace Techtoon.UI.Views
             Accounts.Clear();
             using var conn = new NpgsqlConnection(_connectionString);
             conn.Open();
-            using var cmd = new NpgsqlCommand("SELECT id, name FROM accounts WHERE is_active = TRUE ORDER BY name", conn);
+            
+            // فحص وجود عمود is_active
+            bool hasIsActive = false;
+            using (var chk = new NpgsqlCommand("SELECT column_name FROM information_schema.columns WHERE table_name='accounts' AND column_name='is_active'", conn))
+            using (var rdr = chk.ExecuteReader()) hasIsActive = rdr.Read();
+            
+            string sql = "SELECT id, name FROM accounts ";
+            if (hasIsActive) sql += "WHERE is_active = TRUE ";
+            sql += "ORDER BY name";
+            
+            using var cmd = new NpgsqlCommand(sql, conn);
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
