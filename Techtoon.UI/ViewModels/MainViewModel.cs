@@ -89,6 +89,7 @@ public class MainViewModel : ViewModelBase
             "Reports" => new ReportsViewModel(),
             "CashBoxes" => new CashBoxesViewModel(),
             "Settings" => new SettingsViewModel(),
+            "Loans" => new LoansViewModel(),
             "DataManagement" => new DataManagementViewModel(),
             "Users" => new UsersViewModel(),
             "StockLevels" => new StockLevelsViewModel(),

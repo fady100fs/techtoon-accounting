@@ -101,5 +101,6 @@ public partial class App : Application
                 Log("  Inner: " + ex.InnerException.Message);
             Shutdown(1);
         }
+        
     }
 }

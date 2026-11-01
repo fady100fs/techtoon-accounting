@@ -309,5 +309,17 @@ namespace Techtoon.UI.Views
                 PrintPopup.IsOpen = !PrintPopup.IsOpen;
             }
         }
+        private void EvaluateCellExpression(object sender, RoutedEventArgs e)
+        {
+            if (sender is System.Windows.Controls.TextBox tb)
+            {
+                string text = tb.Text?.Trim();
+                if (!string.IsNullOrEmpty(text) && text.ContainsAny(new[] { '+', '-', '*', '/' }))
+                {
+                    double result = Techtoon.UI.Services.MathHelper.EvaluateExpression(text);
+                    tb.Text = result.ToString("0.##");
+                }
+            }
+        }
     }
 }
