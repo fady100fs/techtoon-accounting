@@ -264,7 +264,7 @@ pip install pyinstaller
 ### 2) تحقق من ملف `.env`
 
 ```env
-DATABASE_URL=postgresql://user:password@host/db?sslmode=require
+DATABASE_URL=postgresql://***:***@host/db?sslmode=require
 SECRET_KEY=your-random-40-char-secret
 DEPLOY_MODE=local
 ```

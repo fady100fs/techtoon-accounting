@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="Techtoon.Core/Techtoon.Core.csproj" />
-  <Project Path="Techtoon.Data/Techtoon.Data.csproj" />
-  <Project Path="Techtoon.UI/Techtoon.UI.csproj" />
-</Solution>

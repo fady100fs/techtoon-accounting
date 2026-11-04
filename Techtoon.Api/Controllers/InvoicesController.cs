@@ -1,108 +1,79 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Npgsql;
-using System.Collections.Generic;
+using System;
 using System.Threading.Tasks;
+using Techtoon.Api.DTOs.Invoices;
+using Techtoon.Api.Services;
 
-namespace Techtoon.Api.Controllers
+namespace Techtoon.Api.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class InvoicesController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    public class InvoicesController : ControllerBase
+    private readonly IInvoiceAppService _svc;
+    private readonly ICurrentUserService _current;
+
+    public InvoicesController(IInvoiceAppService svc, ICurrentUserService current)
     {
-        private readonly string _connStr;
+        _svc = svc;
+        _current = current;
+    }
 
-        public InvoicesController(IConfiguration configuration)
+    [HttpGet]
+    public async Task<IActionResult> GetInvoices(
+        [FromQuery] string? type,
+        [FromQuery] string? status,
+        [FromQuery] int? partyId,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] string? search,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        var result = await _svc.GetInvoicesAsync(type, status, partyId, from, to, search, page, pageSize);
+        return Ok(result);
+    }
+
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetInvoice(int id)
+    {
+        var inv = await _svc.GetInvoiceAsync(id);
+        if (inv == null) return NotFound();
+        return Ok(inv);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> CreateInvoice([FromBody] InvoiceCreateDto dto)
+    {
+        if (_current.UserId == null) return Unauthorized();
+        try
         {
-            _connStr = configuration.GetConnectionString("DefaultConnection");
+            var created = await _svc.CreateInvoiceAsync(dto, _current.UserId.Value);
+            return CreatedAtAction(nameof(GetInvoice), new { id = created.Id }, created);
         }
-
-        [HttpGet]
-        public async Task<IActionResult> GetInvoices([FromQuery] int limit = 50)
+        catch (ArgumentException ex)
         {
-            var list = new List<object>();
-            using var conn = new NpgsqlConnection(_connStr);
-            await conn.OpenAsync();
-
-            using var cmd = new NpgsqlCommand(
-                "SELECT i.id, i.invoice_number, i.date, i.type, i.total, i.paid_amount, i.status, " +
-                "COALESCE(p.name, '') AS party_name " +
-                "FROM invoices i LEFT JOIN parties p ON i.party_id = p.id " +
-                "ORDER BY i.date DESC LIMIT @limit", conn);
-            cmd.Parameters.AddWithValue("limit", limit);
-
-            using var r = await cmd.ExecuteReaderAsync();
-            while (await r.ReadAsync())
-            {
-                list.Add(new
-                {
-                    id = r.GetInt32(0),
-                    invoiceNumber = r.GetString(1),
-                    date = r.GetDateTime(2),
-                    type = r.GetString(3),
-                    total = r.GetDouble(4),
-                    paidAmount = r.GetDouble(5),
-                    status = r.GetString(6),
-                    partyName = r.GetString(7)
-                });
-            }
-            return Ok(list);
+            return BadRequest(new { message = ex.Message });
         }
+    }
 
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetInvoice(int id)
-        {
-            using var conn = new NpgsqlConnection(_connStr);
-            await conn.OpenAsync();
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteInvoice(int id)
+    {
+        if (_current.UserId == null) return Unauthorized();
+        var deleted = await _svc.DeleteInvoiceAsync(id, _current.UserId.Value);
+        if (!deleted) return NotFound();
+        return NoContent();
+    }
 
-            // Header
-            object header = null;
-            using (var cmd = new NpgsqlCommand(
-                "SELECT i.id, i.invoice_number, i.date, i.type, i.total, i.paid_amount, i.status, " +
-                "COALESCE(p.name, '') AS party_name " +
-                "FROM invoices i LEFT JOIN parties p ON i.party_id = p.id WHERE i.id = @id", conn))
-            {
-                cmd.Parameters.AddWithValue("id", id);
-                using var r = await cmd.ExecuteReaderAsync();
-                if (await r.ReadAsync())
-                {
-                    header = new
-                    {
-                        id = r.GetInt32(0),
-                        invoiceNumber = r.GetString(1),
-                        date = r.GetDateTime(2),
-                        type = r.GetString(3),
-                        total = r.GetDouble(4),
-                        paidAmount = r.GetDouble(5),
-                        status = r.GetString(6),
-                        partyName = r.GetString(7)
-                    };
-                }
-            }
-
-            if (header == null) return NotFound();
-
-            // Lines
-            var lines = new List<object>();
-            using (var cmd = new NpgsqlCommand(
-                "SELECT il.item_id, i.name, il.quantity, il.price, il.total " +
-                "FROM invoice_lines il JOIN items i ON il.item_id = i.id WHERE il.invoice_id = @id", conn))
-            {
-                cmd.Parameters.AddWithValue("id", id);
-                using var r = await cmd.ExecuteReaderAsync();
-                while (await r.ReadAsync())
-                {
-                    lines.Add(new
-                    {
-                        itemId = r.GetInt32(0),
-                        itemName = r.GetString(1),
-                        quantity = r.GetDouble(2),
-                        price = r.GetDouble(3),
-                        total = r.GetDouble(4)
-                    });
-                }
-            }
-
-            return Ok(new { header, lines });
-        }
+    [HttpPost("{id:int}/cancel")]
+    public async Task<IActionResult> CancelInvoice(int id)
+    {
+        if (_current.UserId == null) return Unauthorized();
+        var cancelled = await _svc.CancelInvoiceAsync(id, _current.UserId.Value);
+        if (!cancelled) return NotFound(new { message = "Invoice not found or already cancelled" });
+        return Ok(new { message = "Invoice cancelled" });
     }
 }

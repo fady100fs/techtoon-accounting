@@ -1,59 +1,80 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Npgsql;
-using System;
 using System.Threading.Tasks;
+using Techtoon.Api.DTOs.Auth;
+using Techtoon.Api.Services;
 
-namespace Techtoon.Api.Controllers
+namespace Techtoon.Api.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class AuthController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    public class AuthController : ControllerBase
+    private readonly IAuthAppService _auth;
+    private readonly ICurrentUserService _current;
+
+    public AuthController(IAuthAppService auth, ICurrentUserService current)
     {
-        private readonly string _connStr;
+        _auth = auth;
+        _current = current;
+    }
 
-        public AuthController(IConfiguration configuration)
-        {
-            _connStr = configuration.GetConnectionString("DefaultConnection");
-        }
+    [HttpPost("login")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Login([FromBody] LoginRequestDto request)
+    {
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var result = await _auth.LoginAsync(request, ip);
+        return Ok(result);
+    }
 
-        public class LoginRequest
-        {
-            public string Username { get; set; }
-            public string Password { get; set; }
-        }
+    [HttpPost("refresh")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequestDto request)
+    {
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var result = await _auth.RefreshAsync(request.RefreshToken, ip);
+        return Ok(result);
+    }
 
-        [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] LoginRequest request)
-        {
-            if (string.IsNullOrEmpty(request?.Username) || string.IsNullOrEmpty(request?.Password))
-                return BadRequest(new { message = "Username and password are required" });
+    [HttpPost("logout")]
+    [Authorize]
+    public async Task<IActionResult> Logout()
+    {
+        if (_current.UserId == null || _current.DeviceId == null)
+            return Unauthorized();
+        await _auth.LogoutAsync(_current.UserId.Value, _current.DeviceId);
+        return Ok(new { message = "Logged out successfully" });
+    }
 
-            using var conn = new NpgsqlConnection(_connStr);
-            await conn.OpenAsync();
+    [HttpGet("me")]
+    [Authorize]
+    public async Task<IActionResult> GetCurrentUser()
+    {
+        if (_current.UserId == null)
+            return Unauthorized();
+        var user = await _auth.GetCurrentUserAsync(_current.UserId.Value);
+        return Ok(user);
+    }
 
-            using var cmd = new NpgsqlCommand("SELECT id, username, full_name, role, is_active, password_hash FROM users WHERE username = @u", conn);
-            cmd.Parameters.AddWithValue("u", request.Username);
+    [HttpGet("devices")]
+    [Authorize]
+    public async Task<IActionResult> GetMyDevices()
+    {
+        if (_current.UserId == null)
+            return Unauthorized();
+        var devices = await _auth.GetDevicesAsync(_current.UserId.Value);
+        return Ok(devices);
+    }
 
-            using var r = await cmd.ExecuteReaderAsync();
-            if (!await r.ReadAsync())
-                return Unauthorized(new { message = "User not found" });
-
-            bool isActive = r.IsDBNull(4) ? true : r.GetBoolean(4);
-            if (!isActive)
-                return Unauthorized(new { message = "Account is disabled" });
-
-            string hash = r.GetString(5);
-            if (!BCrypt.Net.BCrypt.Verify(request.Password, hash))
-                return Unauthorized(new { message = "Invalid password" });
-
-            return Ok(new
-            {
-                id = r.GetInt32(0),
-                username = r.GetString(1),
-                fullName = r.IsDBNull(2) ? "" : r.GetString(2),
-                role = r.IsDBNull(3) ? "" : r.GetString(3),
-                token = "techtoon-token-" + Guid.NewGuid().ToString() // Simple token for demo
-            });
-        }
+    [HttpDelete("devices/{id}")]
+    [Authorize]
+    public async Task<IActionResult> RevokeDevice(int id)
+    {
+        if (_current.UserId == null)
+            return Unauthorized();
+        var revoked = await _auth.RevokeDeviceAsync(_current.UserId.Value, id);
+        if (!revoked) return NotFound(new { message = "Device not found" });
+        return Ok(new { message = "Device revoked" });
     }
 }
